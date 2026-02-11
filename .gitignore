@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+backend/venv/
+.DS_Store
+
+# Node.js
+node_modules/
+dist/
+build/
+frontend/node_modules/
+frontend/dist/
+
+# Project Specific
+backend/uploads/
+backend/models/triposr/
+uploads/
+output.txt
+.vscode/
+.idea/

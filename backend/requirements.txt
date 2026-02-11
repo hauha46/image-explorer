@@ -1,0 +1,35 @@
+# Core server
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
+# PyTorch (CUDA recommended)
+torch>=2.1.0
+torchvision>=0.16.0
+
+# AI Models
+transformers>=4.35.0
+diffusers>=0.24.0
+accelerate>=0.25.0
+safetensors>=0.4.0
+timm>=0.9.12
+
+# TripoSR Dependencies
+trimesh>=4.0.0
+rembg>=2.0.50
+omegaconf>=2.3.0
+einops>=0.7.0
+
+# Segmentation & Detection
+# segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
+ultralytics>=8.0.0
+
+# Image Processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+scipy>=1.11.0
+
+# Utils
+tqdm>=4.66.0
+huggingface-hub>=0.19.0
