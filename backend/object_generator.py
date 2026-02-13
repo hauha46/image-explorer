@@ -113,15 +113,29 @@ class Object3DGenerator:
         cropped_rgba = rgba[rmin:rmax, cmin:cmax]
         cropped_pil = Image.fromarray(cropped_rgba)
         
-        # 2. TripoSR expects RGB (3 channels) — composite RGBA over white background
-        rgb_bg = Image.new("RGB", cropped_pil.size, (255, 255, 255))
-        rgb_bg.paste(cropped_pil, mask=cropped_pil.split()[3])  # paste using alpha as mask
-        cropped_pil = rgb_bg
+        # 2. Use TripoSR's built-in background removal for a clean silhouette
+        try:
+            processed_image = self.remove_bg_fn(cropped_pil)
+            processed_image = self.resize_fg_fn(processed_image, ratio=0.85)
+        except Exception as e:
+            logger.warning(f"Background removal failed for {object_name}: {e}, using raw crop")
+            processed_image = cropped_pil
+        
+        # CRITICAL: Match canonical TripoSR preprocessing (run.py lines 143-147).
+        # TripoSR was trained on images with GRAY backgrounds.
+        # Alpha-composite RGBA over gray (0.5), NOT .convert("RGB") which gives black.
+        img_arr = np.array(processed_image).astype(np.float32) / 255.0
+        if img_arr.shape[-1] == 4:
+            img_arr = img_arr[:, :, :3] * img_arr[:, :, 3:4] + (1 - img_arr[:, :, 3:4]) * 0.5
+        elif img_arr.shape[-1] != 3:
+            img_arr = img_arr[:, :, :3]  # Fallback: take first 3 channels
+        processed_image = Image.fromarray((img_arr * 255.0).astype(np.uint8))
+        logger.info(f"TripoSR input for {object_name}: mode={processed_image.mode}, size={processed_image.size}")
         
         try:
             # Run generation
             with torch.no_grad():
-                scene_codes = self.model([cropped_pil], device=self.device)
+                scene_codes = self.model([processed_image], device=self.device)
             
             meshes = self.model.extract_mesh(scene_codes, has_vertex_color=True)
             mesh = meshes[0]

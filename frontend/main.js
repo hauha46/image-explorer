@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ── Config ──────────────────────────────────────────────────────────
 const API_BASE = 'http://localhost:8000';
-const MOVE_SPEED = 4.0;
+const MOVE_SPEED = 1.0;
 const SPRINT_MULTIPLIER = 2.0;
 
 // ── State ───────────────────────────────────────────────────────────
@@ -217,29 +216,19 @@ async function loadScene(sid) {
             );
         }
 
-        // 2. Create Object Layers (Billboarded Depth Meshes OR 3D Models)
+        // 2. Create Object Layers (2.5D Depth Meshes)
         if (sceneData.objects) {
             for (const obj of sceneData.objects) {
-                if (obj.type === 'model') {
-                    await createModelLayer(
-                        `${API_BASE}${obj.url}`,
-                        obj.position_uv,
-                        obj.depth_val,
-                        obj.bbox_uv,
-                        cam.fov, cam.near, cam.far,
-                        sceneData.metadata.image_size
-                    );
-                } else {
-                    await createObjectLayer(
-                        `${API_BASE}${obj.url}`,
-                        `${API_BASE}${obj.depth_url}`,
-                        obj.position_uv,
-                        obj.depth_val,
-                        obj.bbox_uv,
-                        cam.fov, cam.near, cam.far,
-                        sceneData.metadata.image_size
-                    );
-                }
+                await createObjectLayer(
+                    `${API_BASE}${obj.url}`,
+                    `${API_BASE}${obj.depth_url}`,
+                    obj.position_uv,
+                    obj.bottom_uv || obj.position_uv,
+                    obj.depth_val,
+                    obj.bbox_uv,
+                    cam.fov, cam.near, cam.far,
+                    sceneData.metadata.image_size
+                );
             }
         }
 
@@ -296,10 +285,14 @@ function createCylindricalDepthGeometry(depthImg, fovDeg, aspect, near, far) {
     const pos = geometry.attributes.position;
     const uv = geometry.attributes.uv;
 
-    // Wrap angle: 100 degrees
-    const hFov = THREE.MathUtils.degToRad(100);
-    // Vertical FOV matched to aspect
-    const vFov = hFov / (depthImg.width / depthImg.height);
+    // Use the scene's actual FOV — NOT a hardcoded value
+    const hFov = THREE.MathUtils.degToRad(fovDeg);
+    // Vertical FOV from aspect ratio
+    const vFov = hFov * (depthImg.height / depthImg.width);
+
+    // First pass: position all vertices
+    // Store per-vertex radius for depth-tear detection
+    const radii = new Float32Array(pos.count);
 
     for (let i = 0; i < pos.count; i++) {
         const u = uv.getX(i);
@@ -310,16 +303,15 @@ function createCylindricalDepthGeometry(depthImg, fovDeg, aspect, near, far) {
         const py = Math.floor((1 - v) * (canvas.height - 1));
         const idx = (py * canvas.width + px) * 4;
         const d_raw = data[idx] / 255.0;
-        // Invert: 1.0 (Near) -> 0.0 -> Radius=Near
-        //         0.0 (Far)  -> 1.0 -> Radius=Far
         const d_inv = 1.0 - d_raw;
 
         const radius = near + (d_inv * (far - near));
+        radii[i] = radius;
 
         // Cylindrical mapping
         const phi = (u - 0.5) * hFov;
         const y_ang = (v - 0.5) * vFov;
-        const height = radius * Math.tan(y_ang); // Approximate height on cylinder surface
+        const height = radius * Math.tan(y_ang);
 
         const x = radius * Math.sin(phi);
         const y = height;
@@ -328,58 +320,71 @@ function createCylindricalDepthGeometry(depthImg, fovDeg, aspect, near, far) {
         pos.setXYZ(i, x, y, z);
     }
 
+    // Second pass: degenerate triangles at depth discontinuities
+    // This prevents rubber-band stretching where depth changes sharply
+    const index = geometry.index;
+    if (index) {
+        const indices = index.array;
+        const depthRange = far - near;
+        const tearThreshold = depthRange * 0.15; // 15% of total range
+
+        for (let t = 0; t < indices.length; t += 3) {
+            const i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
+            const r0 = radii[i0], r1 = radii[i1], r2 = radii[i2];
+            const maxR = Math.max(r0, r1, r2);
+            const minR = Math.min(r0, r1, r2);
+
+            if (maxR - minR > tearThreshold) {
+                // Collapse triangle to a degenerate point
+                indices[t] = i0;
+                indices[t + 1] = i0;
+                indices[t + 2] = i0;
+            }
+        }
+        index.needsUpdate = true;
+    }
+
     geometry.computeVertexNormals();
     return geometry;
 }
 
 /**
  * Creates a standalone object layer positioned in 3D space.
+ * Uses bottom-anchor UV for grounding.
  */
-function createObjectLayer(imageUrl, depthUrl, posUv, depthVal, bboxUv, fovDeg, near, far, imgSize) {
+function createObjectLayer(imageUrl, depthUrl, posUv, bottomUv, depthVal, bboxUv, fovDeg, near, far, imgSize) {
     return new Promise((resolve) => {
         new THREE.TextureLoader().load(imageUrl, (colorTex) => {
             colorTex.colorSpace = THREE.SRGBColorSpace;
             new THREE.TextureLoader().load(depthUrl, (depthTex) => {
 
-                // Calculate position in 3D
-                // Calculate position in 3D
+                // Calculate Z distance from depth
                 const z_dist = near + depthVal * (far - near);
 
-                // Position helpers
-                const hFov = THREE.MathUtils.degToRad(100);
+                // Use scene FOV — NOT hardcoded
+                const hFov = THREE.MathUtils.degToRad(fovDeg);
                 const aspect = imgSize[0] / imgSize[1];
-                const vFov = hFov / aspect;
+                const vFov = hFov * (imgSize[1] / imgSize[0]);
 
-                // Cylindrical angle of object center
-                const phi = (posUv[0] - 0.5) * hFov;
-                const theta = (posUv[1] - 0.5) * vFov;
+                // Use BOTTOM UV for Y anchor (so objects sit on the ground)
+                const phi = (bottomUv[0] - 0.5) * hFov;
+                const theta_bottom = -(bottomUv[1] - 0.5) * vFov;
 
-                // Object center position matching background projection
-                const cx = z_dist * Math.sin(phi);
-                const cy = z_dist * Math.tan(theta);
-                const cz = -z_dist * Math.cos(phi);
+                // Bottom anchor position
+                const bx = z_dist * Math.sin(phi);
+                const by = z_dist * Math.tan(theta_bottom);
+                const bz = -z_dist * Math.cos(phi);
 
-                // Scale calculation (PHYSICALLY ACCURATE)
-                // We want the object's 3D size to match its 2D visual size at that depth.
-
-                // Vertical size:
-                // Total visible vertical angle is vFov.
-                // In cylindrical projection, Y is height = r * tan(theta).
-                // The visible height range is roughly [ r*tan(-vFov/2), r*tan(vFov/2) ]
-                // Total height H = 2 * r * tan(vFov/2)
+                // Scale calculation
                 const totalH = 2 * z_dist * Math.tan(vFov / 2);
-
-                // Object height in world units
                 const bboxH_uv = bboxUv[3] - bboxUv[1];
                 const worldH = totalH * bboxH_uv;
-
-                // Object width in world units (preserve aspect ratio of the crop)
                 const cropW = colorTex.image.width;
                 const cropH = colorTex.image.height;
                 const worldW = worldH * (cropW / cropH);
 
-                // Create depth-displaced plane for the object
-                const geometry = createObjectDepthGeometry(depthTex.image, 1.0); // 1.0 depth scale
+                // Create depth-displaced plane
+                const geometry = createObjectDepthGeometry(depthTex.image, 1.0);
                 const material = new THREE.MeshBasicMaterial({
                     map: colorTex,
                     transparent: true,
@@ -388,12 +393,11 @@ function createObjectLayer(imageUrl, depthUrl, posUv, depthVal, bboxUv, fovDeg, 
                 });
 
                 const mesh = new THREE.Mesh(geometry, material);
-
                 mesh.scale.set(worldW, worldH, 1);
 
-                mesh.position.set(cx, cy, cz);
-                mesh.position.set(cx, cy, cz);
-                mesh.lookAt(0, cy, 0); // Face the vertical axis
+                // Position: anchor at bottom, shift up by half height
+                mesh.position.set(bx, by + worldH / 2, bz);
+                mesh.lookAt(0, by + worldH / 2, 0);
 
                 scene.add(mesh);
                 resolve();
@@ -446,58 +450,4 @@ function createObjectDepthGeometry(depthImg, depthScale) {
 
     geometry.computeVertexNormals();
     return geometry;
-}
-
-/**
- * Creates a true 3D model layer from GLB.
- */
-function createModelLayer(modelUrl, posUv, depthVal, bboxUv, fovDeg, near, far, imgSize) {
-    return new Promise((resolve) => {
-        const loader = new GLTFLoader();
-        loader.load(modelUrl, (gltf) => {
-            const mesh = gltf.scene;
-
-            // Calculate position (Same logic as object layer)
-            const z_dist = near + depthVal * (far - near);
-
-            // Position helpers
-            const hFov = THREE.MathUtils.degToRad(100);
-            const aspect = imgSize[0] / imgSize[1];
-            const vFov = hFov / aspect;
-
-            // Cylindrical angle
-            const phi = (posUv[0] - 0.5) * hFov;
-            const theta = (posUv[1] - 0.5) * vFov;
-
-            // Cartesian coordinates
-            const cx = z_dist * Math.sin(phi);
-            const cy = z_dist * Math.tan(theta);
-            const cz = -z_dist * Math.cos(phi);
-
-            // Calculate Target Scale (Physical World Size)
-            const totalH = 2 * z_dist * Math.tan(vFov / 2);
-            const bboxH_uv = bboxUv[3] - bboxUv[1];
-            const worldH = totalH * bboxH_uv;
-
-            // Measure Model
-            const box = new THREE.Box3().setFromObject(mesh);
-            const modelH = box.max.y - box.min.y || 1.0;
-
-            // Apply scale
-            const scale = worldH / modelH;
-            mesh.scale.set(scale, scale, scale);
-
-            // Position
-            mesh.position.set(cx, cy, cz);
-
-            // Orient: Look at center line
-            mesh.lookAt(0, cy, 0);
-
-            scene.add(mesh);
-            resolve();
-        }, undefined, (err) => {
-            console.error("Failed to load GLB:", err);
-            resolve(); // Don't block scene load
-        });
-    });
 }

@@ -115,7 +115,7 @@ async def process_image(file: UploadFile = File(...), background_tasks: Backgrou
     with open(img_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Resize if too large (LaMa/TripoSR struggle with very high-res images)
+    # Resize if too large
     from PIL import Image as PILImage
     MAX_DIM = 1920
     img = PILImage.open(img_path)
@@ -128,7 +128,7 @@ async def process_image(file: UploadFile = File(...), background_tasks: Backgrou
         img.save(img_path, quality=95)
     img.close()
     
-    logger.info(f"Starting scene reconstruction v3.0.1: session={session_id}")
+    logger.info(f"Starting scene reconstruction v3.2.0: session={session_id}")
     update_status(session_id, "processing", 0, "Initializing")
     
     # Start background processing
@@ -142,7 +142,6 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
     try:
         from scene_processor import SceneProcessor
         
-        # Initialize processor with the global estimator
         processor = SceneProcessor(estimator)
         
         # 1. Depth Estimation
@@ -157,7 +156,7 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
         update_status(session_id, "processing", 50, "Cleaning Background")
         bg_path = await processor.inpaint_background(img_path, objects, session_dir)
         
-        # 4. Layer Extraction (instead of 3D gen)
+        # 4. Layer Extraction
         update_status(session_id, "processing", 70, "Extracting Layers")
         layers = await processor.extract_object_layers(img_path, objects, session_dir)
         
@@ -176,7 +175,7 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
 async def root():
     return {
         "name": "AI 3D Scene Reconstructor",
-        "version": "3.0.1",
+        "version": "3.2.0",
         "endpoints": {
             "/process": "POST - Upload image",
             "/status/{session_id}": "GET - Check status",

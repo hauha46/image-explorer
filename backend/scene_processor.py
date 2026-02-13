@@ -5,7 +5,7 @@ Orchestrates the decomposition of a 2D image into 3D scene elements:
 1. Depth Estimation (for placement)
 2. Object Detection & Segmentation (for extraction)
 3. Background Inpainting (for scene completeness)
-4. 3D Object Generation (for geometry)
+4. Layer Extraction (2.5D layers)
 5. Scene Composition (exporting JSON)
 """
 import asyncio
@@ -19,7 +19,7 @@ from PIL import Image
 from depth_estimator import DepthEstimator
 from segmentation import SceneSegmenter
 from inpainting import OcclusionInpainter
-from object_generator import Object3DGenerator, SceneObjectDetector
+from object_generator import SceneObjectDetector
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,9 @@ class SceneProcessor:
         self.segmenter = SceneSegmenter()
         self.detector = SceneObjectDetector()
         self.inpainter = OcclusionInpainter(method="lama")
-        self.object_generator = Object3DGenerator()
 
     async def estimate_depth(self, image_path: str, output_dir: str):
         """Step 1: Get depth map for scene layout."""
-        # This is CPU/GPU intensive, might want to run in thread pool if blocking
         depth_arr, size = self.depth_estimator.process(image_path, output_dir)
         return depth_arr
 
@@ -93,6 +91,14 @@ class SceneProcessor:
             # Get bounding box
             x1, y1, x2, y2 = map(int, obj['box'])
             
+            # Calculate median depth of masked region (not min/max avg)
+            mask_bool = mask > 127
+            masked_depth = full_depth[mask_bool]
+            if len(masked_depth) > 0:
+                median_depth = float(np.median(masked_depth))
+            else:
+                median_depth = float(full_depth[y1:y2, x1:x2].mean())
+            
             # Crop Image (RGBA)
             # Create RGBA with mask applied
             mask_bool = mask > 127
@@ -107,73 +113,34 @@ class SceneProcessor:
             
             # Pre-calculate ID and stats
             layer_id = f"layer_{i}"
-            d_min, d_max = depth_crop.min(), depth_crop.max()
+            d_min, d_max = float(depth_crop.min()), float(depth_crop.max())
             
-            # Try to generate 3D mesh if high confidence
-            is_3d_model = False
-            mesh_data = None
+            # Save as 2.5D Layer
+            img_filename = f"{layer_id}.png"
+            depth_filename = f"{layer_id}_depth.npy"
             
-            if obj['score'] > 0.5:
-                try:
-                    # Lazy load generator only if needed
-                    if not self.object_generator.model:
-                        self.object_generator._load_model()
-                        
-                    if self.object_generator.model != "missing" and self.object_generator.model != "error":
-                        # We need the full mask for TripoSR
-                        # Re-load mask from path to be safe
-                        full_mask = np.array(Image.open(obj['mask_path']).convert("L")) / 255.0
-                        
-                        mesh_res = self.object_generator.generate_from_segment(
-                            image, 
-                            full_mask, 
-                            output_dir, 
-                            f"{layer_id}_mesh"
-                        )
-                        
-                        if mesh_res:
-                            is_3d_model = True
-                            mesh_data = mesh_res
-                except Exception as e:
-                    logger.warning(f"3D generation failed for {layer_id}: {e}")
+            Image.fromarray(obj_crop).save(Path(output_dir) / img_filename)
+            np.save(Path(output_dir) / depth_filename, depth_crop)
             
-            if is_3d_model and mesh_data:
-                # Add as 3D Model
-                extracted_layers.append({
-                    "id": layer_id,
-                    "label": obj.get('label', 'object'),
-                    "type": "model",
-                    "url": f"/uploads/{Path(output_dir).name}/{Path(mesh_data['mesh_path']).name}",
-                    "bbox": [x1, y1, x2, y2],
-                    "center_uv": [(x1+x2)/2/img_arr.shape[1], (y1+y2)/2/img_arr.shape[0]],
-                    "depth_range": [float(d_min), float(d_max)]
-                })
+            # Create depth PNG for frontend visualization/loading
+            if d_max > d_min:
+                depth_norm = ((depth_crop - d_min) / (d_max - d_min) * 255).astype(np.uint8)
             else:
-                # Faceback to 2.5D Layer
-                img_filename = f"{layer_id}.png"
-                depth_filename = f"{layer_id}_depth.npy"
-                
-                Image.fromarray(obj_crop).save(Path(output_dir) / img_filename)
-                np.save(Path(output_dir) / depth_filename, depth_crop)
-                
-                # Create depth PNG for frontend visualization/loading
-                # Normalize to 0-255 for PNG
-                if d_max > d_min:
-                    depth_norm = ((depth_crop - d_min) / (d_max - d_min) * 255).astype(np.uint8)
-                else:
-                    depth_norm = np.zeros_like(depth_crop, dtype=np.uint8)
-                Image.fromarray(depth_norm).save(Path(output_dir) / f"{layer_id}_depth.png")
-                
-                extracted_layers.append({
-                    "id": layer_id,
-                    "label": obj.get('label', 'object'),
-                    "type": "layer",
-                    "image_path": img_filename,
-                    "depth_path": f"{layer_id}_depth.png",
-                    "bbox": [x1, y1, x2, y2],
-                    "center_uv": [(x1+x2)/2/img_arr.shape[1], (y1+y2)/2/img_arr.shape[0]],
-                    "depth_range": [float(d_min), float(d_max)]
-                })
+                depth_norm = np.zeros_like(depth_crop, dtype=np.uint8)
+            Image.fromarray(depth_norm).save(Path(output_dir) / f"{layer_id}_depth.png")
+            
+            extracted_layers.append({
+                "id": layer_id,
+                "label": obj.get('label', 'object'),
+                "type": "layer",
+                "image_path": img_filename,
+                "depth_path": f"{layer_id}_depth.png",
+                "bbox": [x1, y1, x2, y2],
+                "center_uv": [(x1+x2)/2/img_arr.shape[1], (y1+y2)/2/img_arr.shape[0]],
+                "bottom_uv": [(x1+x2)/2/img_arr.shape[1], y2/img_arr.shape[0]],
+                "median_depth": median_depth,
+                "depth_range": [d_min, d_max]
+            })
             
         return extracted_layers
 
@@ -200,15 +167,8 @@ class SceneProcessor:
             # Calculate world position from center UV & depth
             u, v = layer["center_uv"]
             
-            # Average depth of the object
-            # Map global depth value to scene Z
-            # (Note: Depth-Anything is relative disparity, usually inverse depth)
-            # We used simple min-max normalization in the crop. 
-            # Ideally we want the object's depth relative to the scene.
-            # layer["depth_range"] are raw values from the full depth map.
-            
-            obj_d_min, obj_d_max = layer["depth_range"]
-            avg_raw_depth = (obj_d_min + obj_d_max) / 2
+            # Use median depth of the masked region for accurate placement
+            avg_raw_depth = layer.get("median_depth", (layer["depth_range"][0] + layer["depth_range"][1]) / 2)
             
             # Normalize global depth to 0-1
             if global_max > global_min:
@@ -225,10 +185,14 @@ class SceneProcessor:
             # Map to scene distance
             z_dist = NEAR_DEPTH + d_norm * (FAR_DEPTH - NEAR_DEPTH)
             
+            # Bottom-anchor UV for grounding objects on the floor
+            bu, bv = layer.get("bottom_uv", [u, v])
+            
             scene_obj = {
                 "id": layer["id"],
                 "type": layer["type"],  # 'layer' or 'model'
                 "position_uv": [u, v],
+                "bottom_uv": [bu, bv],
                 "depth_val": d_norm, # 0-1 relative to scene
                 "bbox_uv": [
                     layer["bbox"][0]/img_w, layer["bbox"][1]/img_h,
@@ -262,7 +226,7 @@ class SceneProcessor:
                 "depth_range": [global_min, global_max]
             }
         }
-        
+
         with open(Path(session_dir) / "scene.json", "w") as f:
             json.dump(scene_data, f, indent=2)
             
