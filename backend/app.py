@@ -23,10 +23,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Core components
-from depth_estimator import DepthEstimator
-
-# Global depth estimator reference
+# Global references
 _depth_estimator = None
 
 
@@ -48,12 +45,8 @@ app = FastAPI(
     version="3.0.1"
 )
 
-# Initialize depth estimator (always needed)
-try:
-    estimator = DepthEstimator(model_size="large")
-except Exception as e:
-    logger.warning(f"Failed to load large depth model, falling back to small: {e}")
-    estimator = DepthEstimator(model_size="small")
+# Initialize estimator (disabled for test pipeline)
+estimator = None
 
 # CORS
 app.add_middleware(
@@ -144,25 +137,21 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
         
         processor = SceneProcessor(estimator)
         
-        # 1. Depth Estimation
+        # 1. Depth Estimation (For Layout/FOV)
         update_status(session_id, "processing", 10, "Estimating Depth")
         depth_arr = await processor.estimate_depth(img_path, session_dir)
         
-        # 2. Object Detection & Segmentation
-        update_status(session_id, "processing", 30, "Analyzing Scene")
-        objects = await processor.detect_and_segment(img_path, session_dir)
+        # 2. Novel View Synthesis (SVD - TBA)
+        update_status(session_id, "processing", 30, "Generating Multi-Views")
+        await processor.generate_novel_views(img_path, session_dir)
         
-        # 3. Background Inpainting
-        update_status(session_id, "processing", 50, "Cleaning Background")
-        bg_path = await processor.inpaint_background(img_path, objects, session_dir)
+        # 3. 3D Reconstruction (Dust3r - TBA)
+        update_status(session_id, "processing", 60, "Reconstructing 3D Point Cloud")
+        await processor.reconstruct_3d([], session_dir)
         
-        # 4. Layer Extraction
-        update_status(session_id, "processing", 70, "Extracting Layers")
-        layers = await processor.extract_object_layers(img_path, objects, session_dir)
-        
-        # 5. Scene Composition
+        # 4. Scene Composition
         update_status(session_id, "processing", 90, "Composing Scene")
-        scene_data = processor.compose_scene(session_id, session_dir, bg_path, layers)
+        scene_data = processor.compose_scene(session_id, session_dir)
         
         update_status(session_id, "complete", 100, "Done")
         

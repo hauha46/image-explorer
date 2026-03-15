@@ -16,8 +16,15 @@ frontend/dist/
 
 # Project Specific
 backend/uploads/
-backend/models/triposr/
+backend/models/
+backend/vendor/
+backend/images/
+backend/output_3d/
+backend/test_*.py
+backend/debug_mesh.py
+backend/*.log
 uploads/
+test_img/
 output.txt
 .vscode/
 .idea/
