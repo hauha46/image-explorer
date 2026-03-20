@@ -3,7 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ── Config ──────────────────────────────────────────────────────────
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:9876';
 const MOVE_SPEED = 0.05;    // Reduced base speed for better point cloud exploration
 const SPRINT_MULTIPLIER = 2.0;
 

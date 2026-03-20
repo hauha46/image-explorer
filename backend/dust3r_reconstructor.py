@@ -6,19 +6,21 @@ from pathlib import Path
 import logging
 
 # Add vendor/Dust3r to Python Path so we can import its modules
-VENDOR_DIR = Path(__file__).parent / "vendor/Dust3r"
+VENDOR_DIR = Path(__file__).parent / "vendor/dust3r"
 sys.path.append(str(VENDOR_DIR))
 
 import torch
 import numpy as np
-from dust3r.inference import inference, load_model
+from dust3r.inference import inference
+from dust3r.model import load_model
+from dust3r.model import AsymmetricCroCo3DStereo
 from dust3r.image_pairs import make_pairs
 from dust3r.utils.image import load_images
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 
 # For exporting
 import importlib.util
-demo_path = VENDOR_DIR / "demo.py"
+demo_path = VENDOR_DIR / "dust3r/demo.py"
 spec = importlib.util.spec_from_file_location("dust3r_demo", str(demo_path))
 dust3r_demo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dust3r_demo)
@@ -28,16 +30,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Dust3rReconstructor:
-    def __init__(self, device="mps"):
-        self.device = device
+    def __init__(self, device=None):
+        if device is None:
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            elif torch.backends.mps.is_available():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
+        else:
+            self.device = device
         
         # Determine checkpoint path
-        ckpt_path = VENDOR_DIR / "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth"
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"Dust3r checkpoint not found at {ckpt_path}. Please ensure it is downloaded.")
-            
-        logger.info(f"Loading DUSt3R model from {ckpt_path} onto {self.device}...")
-        self.model = load_model(str(ckpt_path), self.device).eval()
+        model_name = "naver/DUSt3R_ViTLarge_BaseDecoder_512_dpt"
+        logger.info(f"Loading DUSt3R model {model_name} onto {self.device}...")
+        self.model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(self.device).eval()
         logger.info("DUSt3R model loaded successfully.")
 
     def reconstruct(self, images_dir: str, output_dir: str, as_pointcloud=True):
@@ -98,7 +105,8 @@ class Dust3rReconstructor:
             mask_sky=False,
             clean_depth=True,
             transparent_cams=False,
-            cam_size=0.05
+            cam_size=0.05,
+            silent=False
         )
         
         logger.info(f"Reconstruction Complete! Saved to: {outfile}")
