@@ -18,13 +18,14 @@ import os
 import uuid
 import logging
 from pathlib import Path
+from scene_processor import SceneProcessor
+from dust3r_reconstructor import Dust3rReconstructor
+from contextlib import asynccontextmanager
+from depth_pro_estimator import DepthProEstimator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Global references
-_depth_estimator = None
 
 
 class ProcessingStatus(BaseModel):
@@ -39,10 +40,27 @@ class ProcessingStatus(BaseModel):
 processing_status = {}
 
 
+# Global dict to hold models
+global_model_instances = {}
+# Global Models (only load it in once, use as many times as you want)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(f"Loading Dust3r model into memory...")
+    global_model_instances["dust3r"] = Dust3rReconstructor()
+    global_model_instances["depth-pro"] = DepthProEstimator()
+
+    yield # Server runs and handles requests here
+
+    print(f"Cleaning up ml model instances...")
+    global_model_instances.clear()
+
+
+
 app = FastAPI(
     title="Image to 3D Scene Reconstruction",
     description="Decompose single images into fully navigable 3D scenes with valid object geometry",
-    version="3.0.1"
+    version="3.0.1",
+    lifespan=lifespan
 )
 
 # Initialize estimator (disabled for test pipeline)
@@ -133,9 +151,11 @@ async def process_image(file: UploadFile = File(...), background_tasks: Backgrou
 async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
     """Execute Layered Depth Scene pipeline (2.5D)."""
     try:
-        from scene_processor import SceneProcessor
-        
-        processor = SceneProcessor(estimator)
+        depth_model = global_model_instances["depth-pro"]
+        dust3r_model = global_model_instances["dust3r"]
+        processor = SceneProcessor(depth_model, dust3r_model)
+
+
         
         # 1. Depth Estimation (For Layout/FOV)
         update_status(session_id, "processing", 10, "Estimating Depth")
@@ -147,7 +167,9 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
         
         # 3. 3D Reconstruction (Dust3r - TBA)
         update_status(session_id, "processing", 60, "Reconstructing 3D Point Cloud")
-        await processor.reconstruct_3d([], session_dir)
+
+        views_dir = f"{session_dir}/views"
+        await processor.reconstruct_3d(views_dir, session_dir)
         
         # 4. Scene Composition
         update_status(session_id, "processing", 90, "Composing Scene")
