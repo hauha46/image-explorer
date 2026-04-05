@@ -183,40 +183,53 @@ async def process_image(
 async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
                              model_name: str = "svd", prompt: str = None):
     """Execute the full NVS + 3D reconstruction pipeline."""
+    import time
     try:
+        t_pipeline = time.time()
         depth_model = global_model_instances["depth-pro"]
         dust3r_model = global_model_instances["dust3r"]
 
         # Lazy-load the chosen synthesizer (keeps VRAM free until needed)
         synth_key = f"synth-{model_name}"
+        t0 = time.time()
         if synth_key not in global_model_instances:
             logger.info(f"Loading synthesizer '{model_name}' for the first time …")
             synthesizer = get_synthesizer(model_name)
             synthesizer.load_model(device="cuda")
             global_model_instances[synth_key] = synthesizer
         synthesizer = global_model_instances[synth_key]
+        logger.info(f"[Timer] Synthesizer load: {time.time() - t0:.2f}s")
 
         processor = SceneProcessor(depth_model, dust3r_model, synthesizer)
 
         # 1. Depth Estimation
         update_status(session_id, "processing", 10, "Estimating Depth")
+        t0 = time.time()
         depth_arr = await processor.estimate_depth(img_path, session_dir)
+        logger.info(f"[Timer] Depth Estimation: {time.time() - t0:.2f}s")
 
         # 2. Novel View Synthesis
         update_status(session_id, "processing", 30, "Generating Novel Views")
+        t0 = time.time()
         await processor.generate_novel_views(
             img_path, session_dir, depth_map=depth_arr, num_views=8, prompt=prompt
         )
+        logger.info(f"[Timer] Novel View Synthesis: {time.time() - t0:.2f}s")
 
         # 3. 3D Reconstruction (Dust3r)
         update_status(session_id, "processing", 60, "Reconstructing 3D Point Cloud")
+        t0 = time.time()
         views_dir = f"{session_dir}/views"
         await processor.reconstruct_3d(views_dir, session_dir)
+        logger.info(f"[Timer] 3D Reconstruction: {time.time() - t0:.2f}s")
 
         # 4. Scene Composition
         update_status(session_id, "processing", 90, "Composing Scene")
+        t0 = time.time()
         processor.compose_scene(session_id, session_dir)
+        logger.info(f"[Timer] Scene Composition: {time.time() - t0:.2f}s")
 
+        logger.info(f"[Timer] Total pipeline: {time.time() - t_pipeline:.2f}s")
         update_status(session_id, "complete", 100, "Done")
 
     except Exception as e:
