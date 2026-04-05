@@ -47,6 +47,13 @@ class Dust3rReconstructor:
         self.model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(self.device).eval()
         logger.info("DUSt3R model loaded successfully.")
 
+    def set_device(self, device: str) -> None:
+        """Move weights to *device* (e.g. offload to cpu before ViewCrafter diffusion)."""
+        if self.model is None:
+            return
+        self.device = device
+        self.model.to(device)
+
     def reconstruct(self, images_dir: str, output_dir: str, as_pointcloud=True):
         """
         Takes a folder of images, runs Dust3r, and exports a 3D model (GLB pointcloud).

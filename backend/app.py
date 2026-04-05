@@ -211,9 +211,24 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         # 2. Novel View Synthesis
         update_status(session_id, "processing", 30, "Generating Novel Views")
         t0 = time.time()
-        await processor.generate_novel_views(
-            img_path, session_dir, depth_map=depth_arr, num_views=8, prompt=prompt
-        )
+        if model_name == "viewcrafter":
+            import torch
+            logger.info(
+                "Offloading DepthPro + project DUSt3R to CPU for ViewCrafter VRAM headroom …"
+            )
+            depth_model.set_device("cpu")
+            dust3r_model.set_device("cpu")
+            torch.cuda.empty_cache()
+        try:
+            await processor.generate_novel_views(
+                img_path, session_dir, depth_map=depth_arr, num_views=4, prompt=prompt
+            )
+        finally:
+            if model_name == "viewcrafter":
+                import torch
+                depth_model.set_device("cuda")
+                dust3r_model.set_device("cuda")
+                torch.cuda.empty_cache()
         logger.info(f"[Timer] Novel View Synthesis: {time.time() - t0:.2f}s")
 
         # 3. 3D Reconstruction (Dust3r)

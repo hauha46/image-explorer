@@ -54,6 +54,13 @@ class DepthProEstimator:
             print(f"Failed to load DepthPro model: {e}")
             raise e
 
+    def set_device(self, device: str) -> None:
+        """Move weights to *device* (e.g. offload to cpu before ViewCrafter diffusion)."""
+        if self.model is None:
+            return
+        self.device = device
+        self.model.to(device)
+
     def process(self, image_path, output_dir):
         """
         Estimate metric depth and FOV.

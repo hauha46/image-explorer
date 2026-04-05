@@ -64,7 +64,7 @@ def _build_opts(
     d_r: float = -0.2,
     elevation: float = 5.0,
     center_scale: float = 1.0,
-    ddim_steps: int = 50,
+    ddim_steps: int = 15,
     video_length: int = 25,
     prompt: str = "Rotating view of a scene",
 ) -> types.SimpleNamespace:
