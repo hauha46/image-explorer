@@ -1,28 +1,26 @@
 """
-Scene Processor - The Core Pipeline (SVD + Dust3r V3)
+Scene Processor - The Core Pipeline (NVS + Dust3r V3)
 
 Orchestrates the decomposition of a 2D image into a true 3D scene:
 1. Depth Estimation (DepthPro)
-2. Novel View Synthesis (SVD) [TODO]
-3. 3D Reconstruction (Dust3r) [TODO]
-4. Scene Composition (exporting JSON) [TODO]
+2. Novel View Synthesis (SVD / ViewCrafter / VIVID)
+3. 3D Reconstruction (Dust3r)
+4. Scene Composition (exporting JSON)
 """
-import asyncio
 import logging
 import json
+import shutil
 import numpy as np
 from pathlib import Path
 
-from requests.compat import has_simplejson
-
-# Core modules
-
 logger = logging.getLogger(__name__)
 
+
 class SceneProcessor:
-    def __init__(self, depth_estimator=None, duster_model=None):
+    def __init__(self, depth_estimator=None, duster_model=None, synthesizer=None):
         self.depth_estimator = depth_estimator
         self.duster_model = duster_model
+        self.synthesizer = synthesizer
         self.scene_metadata = {}
 
     async def estimate_depth(self, image_path: str, output_dir: str):
@@ -31,21 +29,50 @@ class SceneProcessor:
         self.scene_metadata["fov"] = fov_deg
         logger.info(f"DepthPro estimated FOV: {fov_deg:.2f} degrees")
         return depth_arr
-        
-    async def generate_novel_views(self, image_path: str, output_dir: str):
-        """Step 2: Generate multi-view images using SVD (To Be Implemented)."""
-        logger.info("Novel View Synthesis not yet implemented.")
-        pass
+
+    async def generate_novel_views(self, image_path: str, output_dir: str,
+                                   depth_map=None, num_views: int = 8,
+                                   prompt: str = None):
+        """Step 2: Generate multi-view images using the configured NVS backend."""
+        views_dir = Path(output_dir) / "views"
+        views_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.synthesizer is None:
+            logger.warning("No synthesizer configured — skipping NVS.")
+            shutil.copy2(image_path, str(views_dir / "view_000.png"))
+            return [str(views_dir / "view_000.png")]
+
+        fov = self.scene_metadata.get("fov")
+        view_paths = self.synthesizer.generate_views(
+            image_path=image_path,
+            output_dir=output_dir,
+            num_views=num_views,
+            depth_map=depth_map,
+            fov_deg=fov,
+            prompt=prompt,
+        )
+
+        # Always include the original image so DUSt3R has an anchor view
+        original_in_views = views_dir / "input_original.png"
+        if not original_in_views.exists():
+            shutil.copy2(image_path, str(original_in_views))
+            view_paths.append(str(original_in_views))
+
+        logger.info(f"NVS produced {len(view_paths)} views in {views_dir}")
+        return sorted(view_paths)
 
     async def reconstruct_3d(self, views_dir: str, output_dir: str):
-        """Step 3: Generate Point Cloud from views using Dust3r (To Be Implemented)."""
+        """Step 3: Generate Point Cloud from views using Dust3r."""
         logger.info(f"Starting Dust3r reconstruction from {views_dir}")
-        if not hasattr(self, 'duster_model') or self.duster_model is None:
-            raise ValueError("Dust3r reconstructor model was not initialized or was not passed in to SceneProcessor")
+        if self.duster_model is None:
+            raise ValueError(
+                "Dust3r reconstructor model was not initialized or "
+                "was not passed in to SceneProcessor"
+            )
 
         outfile = self.duster_model.reconstruct(
             images_dir=views_dir,
-            output_dir=output_dir
+            output_dir=output_dir,
         )
 
         logger.info(f"Dust3r reconstruction complete. Output located at {outfile}")
@@ -53,9 +80,8 @@ class SceneProcessor:
 
     def compose_scene(self, session_id: str, session_dir: str):
         """Step 4: Create final scene JSON."""
-        # For now, just a dummy response until Dust3r is integrated
         FOV_DEG = float(self.scene_metadata.get("fov", 75.0))
-        
+
         scene_data = {
             "background": {
                 "url": f"/uploads/{session_id}/input.jpg",
@@ -69,11 +95,11 @@ class SceneProcessor:
                 "far": 10.0,
             },
             "metadata": {
-                "status": "pending_3d_reconstruction"
-            }
+                "status": "complete",
+            },
         }
 
         with open(Path(session_dir) / "scene.json", "w") as f:
             json.dump(scene_data, f, indent=2)
-            
+
         return scene_data

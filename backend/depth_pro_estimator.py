@@ -7,7 +7,8 @@ import depth_pro
 from depth_pro import create_model_and_transforms, load_rgb
 
 class DepthProEstimator:
-    def __init__(self, device='mps'):
+    # eason cuda execute
+    def __init__(self, device='cuda'):
         self.device = device
         self.model = None
         self.transform = None

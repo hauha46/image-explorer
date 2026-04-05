@@ -2,12 +2,12 @@
 AI-Enhanced 3D Scene Reconstruction API
 
 Decomposes a single image into a 3D scene with:
-1. Spatial Understanding (Depth)
-2. Object Separation (Segmentation)
-3. 3D Object Reconstruction (TripoSR)
-4. Background Inpainting
+1. Depth Estimation (DepthPro)
+2. Novel View Synthesis (SVD / ViewCrafter / VIVID)
+3. 3D Reconstruction (Dust3r)
+4. Scene Composition
 """
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -22,6 +22,7 @@ from scene_processor import SceneProcessor
 from dust3r_reconstructor import Dust3rReconstructor
 from contextlib import asynccontextmanager
 from depth_pro_estimator import DepthProEstimator
+from synthesizers import get_synthesizer, AVAILABLE_MODELS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,29 +43,47 @@ processing_status = {}
 
 # Global dict to hold models
 global_model_instances = {}
-# Global Models (only load it in once, use as many times as you want)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"Loading Dust3r model into memory...")
+    # region agent log
+    import torch, json, time, os as _os; _dbg=r"c:\Users\bcliu\Documents\Northeastern\DeepLearning_Jiang\Final-Project\howie_dan_section\.cursor\debug.log"; _os.makedirs(_os.path.dirname(_dbg),exist_ok=True)
+    _d={"location":"app.py:lifespan","message":"torch_cuda_info","data":{"cuda_available":torch.cuda.is_available(),"torch_version":torch.__version__,"cuda_version":getattr(torch.version,"cuda","none"),"gpu_name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A","arch_list":str(getattr(torch.cuda,"get_arch_list",lambda:[])())},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"A"}
+    with open(_dbg,"a") as _f: _f.write(json.dumps(_d)+"\n")
+    # endregion
+    print("Loading Dust3r model into memory...")
     global_model_instances["dust3r"] = Dust3rReconstructor()
-    global_model_instances["depth-pro"] = DepthProEstimator()
+    # region agent log
+    _d2={"location":"app.py:lifespan:post-dust3r","message":"dust3r_loaded","data":{"success":True},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"B"}
+    with open(_dbg,"a") as _f: _f.write(json.dumps(_d2)+"\n")
+    # endregion
+    try:
+        global_model_instances["depth-pro"] = DepthProEstimator()
+        # region agent log
+        _d3={"location":"app.py:lifespan:post-depthpro","message":"depthpro_loaded","data":{"success":True},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"C"}
+        with open(_dbg,"a") as _f: _f.write(json.dumps(_d3)+"\n")
+        # endregion
+    except Exception as _e:
+        # region agent log
+        _d4={"location":"app.py:lifespan:depthpro-error","message":"depthpro_failed","data":{"error":str(_e)[:500]},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"C"}
+        with open(_dbg,"a") as _f: _f.write(json.dumps(_d4)+"\n")
+        # endregion
+        raise
 
-    yield # Server runs and handles requests here
+    yield
 
-    print(f"Cleaning up ml model instances...")
+    print("Cleaning up ml model instances...")
     global_model_instances.clear()
 
 
 
 app = FastAPI(
     title="Image to 3D Scene Reconstruction",
-    description="Decompose single images into fully navigable 3D scenes with valid object geometry",
-    version="3.0.1",
+    description="Decompose single images into fully navigable 3D scenes via NVS + Dust3r",
+    version="4.0.0",
     lifespan=lifespan
 )
-
-# Initialize estimator (disabled for test pipeline)
-estimator = None
 
 # CORS
 app.add_middleware(
@@ -112,21 +131,33 @@ async def get_status(session_id: str):
 
 
 @app.post("/process")
-async def process_image(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+async def process_image(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+    model: str = Form(default="svd"),
+    prompt: Optional[str] = Form(default=None),
+):
     """
     Upload image and start 3D scene reconstruction.
+
+    ``model`` selects the NVS backend: ``svd`` | ``viewcrafter`` | ``vivid``.
+    ``prompt`` is an optional text prompt used by ViewCrafter for scene guidance.
     Returns session_id immediately.
     """
+    if model not in AVAILABLE_MODELS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown model '{model}'. Choose from {AVAILABLE_MODELS}"},
+        )
+
     session_id = str(uuid.uuid4())[:8]
     session_dir = Path(f"uploads/{session_id}")
     session_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save image
+
     img_path = session_dir / "input.jpg"
     with open(img_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
-    # Resize if too large
+
     from PIL import Image as PILImage
     MAX_DIM = 1920
     img = PILImage.open(img_path)
@@ -138,45 +169,56 @@ async def process_image(file: UploadFile = File(...), background_tasks: Backgrou
         img = img.resize((new_w, new_h), PILImage.LANCZOS)
         img.save(img_path, quality=95)
     img.close()
-    
-    logger.info(f"Starting scene reconstruction v3.2.0: session={session_id}")
+
+    logger.info(f"Starting scene reconstruction v4.0.0: session={session_id}, model={model}")
     update_status(session_id, "processing", 0, "Initializing")
-    
-    # Start background processing
-    background_tasks.add_task(run_scene_pipeline, session_id, str(session_dir), str(img_path))
-    
-    return {"session_id": session_id}
+
+    background_tasks.add_task(
+        run_scene_pipeline, session_id, str(session_dir), str(img_path), model, prompt
+    )
+
+    return {"session_id": session_id, "model": model, "prompt": prompt}
 
 
-async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
-    """Execute Layered Depth Scene pipeline (2.5D)."""
+async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
+                             model_name: str = "svd", prompt: str = None):
+    """Execute the full NVS + 3D reconstruction pipeline."""
     try:
         depth_model = global_model_instances["depth-pro"]
         dust3r_model = global_model_instances["dust3r"]
-        processor = SceneProcessor(depth_model, dust3r_model)
 
+        # Lazy-load the chosen synthesizer (keeps VRAM free until needed)
+        synth_key = f"synth-{model_name}"
+        if synth_key not in global_model_instances:
+            logger.info(f"Loading synthesizer '{model_name}' for the first time …")
+            synthesizer = get_synthesizer(model_name)
+            synthesizer.load_model(device="cuda")
+            global_model_instances[synth_key] = synthesizer
+        synthesizer = global_model_instances[synth_key]
 
-        
-        # 1. Depth Estimation (For Layout/FOV)
+        processor = SceneProcessor(depth_model, dust3r_model, synthesizer)
+
+        # 1. Depth Estimation
         update_status(session_id, "processing", 10, "Estimating Depth")
         depth_arr = await processor.estimate_depth(img_path, session_dir)
-        
-        # 2. Novel View Synthesis (SVD - TBA)
-        update_status(session_id, "processing", 30, "Generating Multi-Views")
-        await processor.generate_novel_views(img_path, session_dir)
-        
-        # 3. 3D Reconstruction (Dust3r - TBA)
-        update_status(session_id, "processing", 60, "Reconstructing 3D Point Cloud")
 
+        # 2. Novel View Synthesis
+        update_status(session_id, "processing", 30, "Generating Novel Views")
+        await processor.generate_novel_views(
+            img_path, session_dir, depth_map=depth_arr, num_views=8, prompt=prompt
+        )
+
+        # 3. 3D Reconstruction (Dust3r)
+        update_status(session_id, "processing", 60, "Reconstructing 3D Point Cloud")
         views_dir = f"{session_dir}/views"
         await processor.reconstruct_3d(views_dir, session_dir)
-        
+
         # 4. Scene Composition
         update_status(session_id, "processing", 90, "Composing Scene")
-        scene_data = processor.compose_scene(session_id, session_dir)
-        
+        processor.compose_scene(session_id, session_dir)
+
         update_status(session_id, "complete", 100, "Done")
-        
+
     except Exception as e:
         logger.error(f"Pipeline failed: {e}", exc_info=True)
         update_status(session_id, "error", 0, str(e))
@@ -186,12 +228,13 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str):
 async def root():
     return {
         "name": "AI 3D Scene Reconstructor",
-        "version": "3.2.0",
+        "version": "4.0.0",
+        "available_models": AVAILABLE_MODELS,
         "endpoints": {
-            "/process": "POST - Upload image",
+            "/process": "POST - Upload image (form fields: file, model)",
             "/status/{session_id}": "GET - Check status",
-            "/uploads/{session_id}/*": "GET - Assets"
-        }
+            "/uploads/{session_id}/*": "GET - Assets",
+        },
     }
 
 
