@@ -221,7 +221,7 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
             torch.cuda.empty_cache()
         try:
             await processor.generate_novel_views(
-                img_path, session_dir, depth_map=depth_arr, num_views=4, prompt=prompt
+                img_path, session_dir, depth_map=depth_arr, num_views=2, prompt=prompt
             )
         finally:
             if model_name == "viewcrafter":
