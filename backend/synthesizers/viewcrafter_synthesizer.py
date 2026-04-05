@@ -168,7 +168,16 @@ class ViewCrafterSynthesizer(BaseSynthesizer):
         if dust3r_root not in sys.path:
             sys.path.insert(0, dust3r_root)
 
-        from viewcrafter import ViewCrafter
+        # ViewCrafter bundles its own DUSt3R (extern/dust3r) whose API differs
+        # from the project's vendor/dust3r.  Temporarily evict the project's
+        # cached dust3r modules so Python resolves the bundled version instead.
+        stashed = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "dust3r" or k.startswith("dust3r.")}
+        try:
+            from viewcrafter import ViewCrafter
+        finally:
+            # Restore the project's dust3r so Dust3rReconstructor keeps working.
+            # ViewCrafter's own references are already bound to the correct objects.
+            sys.modules.update(stashed)
 
         opts = _build_opts(
             image_path=image_path,
