@@ -140,8 +140,8 @@ async def process_image(
     """
     Upload image and start 3D scene reconstruction.
 
-    ``model`` selects the NVS backend: ``svd`` | ``viewcrafter`` | ``vivid``.
-    ``prompt`` is an optional text prompt used by ViewCrafter for scene guidance.
+    ``model`` selects the NVS backend: ``svd`` | ``viewcrafter`` | ``vivid`` | ``panodreamer``.
+    ``prompt`` is an optional text prompt (used by ViewCrafter and PanoDreamer for scene guidance).
     Returns session_id immediately.
     """
     if model not in AVAILABLE_MODELS:
@@ -184,8 +184,18 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
                              model_name: str = "svd", prompt: str = None):
     """Execute the full NVS + 3D reconstruction pipeline."""
     import time
+    from datetime import datetime
     try:
         t_pipeline = time.time()
+
+        meta_path = os.path.join(session_dir, f"{model_name}.txt")
+        with open(meta_path, "w", encoding="utf-8") as mf:
+            mf.write(f"session_id: {session_id}\n")
+            mf.write(f"model: {model_name}\n")
+            mf.write(f"prompt: {prompt or '(none)'}\n")
+            mf.write(f"input_image: {os.path.basename(img_path)}\n")
+            mf.write(f"timestamp: {datetime.now().isoformat()}\n")
+
         depth_model = global_model_instances["depth-pro"]
         dust3r_model = global_model_instances["dust3r"]
 
@@ -211,20 +221,21 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         # 2. Novel View Synthesis
         update_status(session_id, "processing", 30, "Generating Novel Views")
         t0 = time.time()
-        if model_name == "viewcrafter":
+        needs_vram_offload = model_name in ("viewcrafter", "panodreamer")
+        if needs_vram_offload:
             import torch
             logger.info(
-                "Offloading DepthPro + project DUSt3R to CPU for ViewCrafter VRAM headroom …"
+                f"Offloading DepthPro + project DUSt3R to CPU for {model_name} VRAM headroom …"
             )
             depth_model.set_device("cpu")
             dust3r_model.set_device("cpu")
             torch.cuda.empty_cache()
         try:
             await processor.generate_novel_views(
-                img_path, session_dir, depth_map=depth_arr, num_views=2, prompt=prompt
+                img_path, session_dir, depth_map=depth_arr, num_views=10, prompt=prompt
             )
         finally:
-            if model_name == "viewcrafter":
+            if needs_vram_offload:
                 import torch
                 depth_model.set_device("cuda")
                 dust3r_model.set_device("cuda")

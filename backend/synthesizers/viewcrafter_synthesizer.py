@@ -37,21 +37,24 @@ CHECKPOINT_DIR = VENDOR_DIR / "checkpoints"
 
 
 def _ensure_checkpoint() -> str:
-    """Download the ViewCrafter diffusion checkpoint if missing."""
-    ckpt = CHECKPOINT_DIR / "model.ckpt"
+    """Download the ViewCrafter 512 diffusion checkpoint if missing."""
+    ckpt = CHECKPOINT_DIR / "model_512.ckpt"
     if ckpt.exists():
         return str(ckpt)
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info("Downloading ViewCrafter checkpoint from HuggingFace …")
+    logger.info("Downloading ViewCrafter 512 checkpoint from HuggingFace …")
     from huggingface_hub import hf_hub_download
 
     hf_hub_download(
-        repo_id="Drexubery/ViewCrafter_25",
+        repo_id="Drexubery/ViewCrafter_25_512",
         filename="model.ckpt",
         local_dir=str(CHECKPOINT_DIR),
-        force_download=True,
+        local_dir_use_symlinks=False,
     )
+    # Rename to model_512.ckpt to distinguish from 1024 version
+    import shutil
+    shutil.move(str(CHECKPOINT_DIR / "model.ckpt"), str(ckpt))
     return str(ckpt)
 
 
@@ -95,12 +98,12 @@ def _build_opts(
         dpt_trd=1.0,
         # diffusion
         ckpt_path=ckpt_path,
-        config=str(VENDOR_DIR / "configs" / "inference_pvd_1024.yaml"),
+        config=str(VENDOR_DIR / "configs" / "inference_pvd_512.yaml"),
         ddim_steps=ddim_steps,
         ddim_eta=1.0,
         bs=1,
-        height=576,
-        width=1024,
+        height=320,
+        width=512,
         frame_stride=10,
         unconditional_guidance_scale=7.5,
         seed=123,
@@ -196,7 +199,7 @@ class ViewCrafterSynthesizer(BaseSynthesizer):
         # diffusion_result: Tensor [num_frames, H, W, 3] in [-1, 1]
 
         frames = ((diffusion_result + 1.0) / 2.0).clamp(0, 1)
-        frames_np = (frames.cpu().numpy() * 255).astype(np.uint8)
+        frames_np = (frames.cpu().float().numpy() * 255).astype(np.uint8)
 
         saved: list[str] = []
         for i, frame in enumerate(frames_np):

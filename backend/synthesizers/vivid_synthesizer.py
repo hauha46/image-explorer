@@ -50,46 +50,65 @@ def _rotation_y(angle_deg: float) -> np.ndarray:
     return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float32)
 
 
+def _make_K(focal_px: float, img_w: int, img_h: int) -> torch.Tensor:
+    """Build a 3x3 intrinsic matrix from focal length and image size."""
+    K = torch.zeros(3, 3)
+    K[0, 0] = focal_px           # fx
+    K[1, 1] = focal_px           # fy  (square pixels)
+    K[0, 2] = img_w / 2.0        # cx
+    K[1, 2] = img_h / 2.0        # cy
+    K[2, 2] = 1.0
+    return K
+
+
 def _make_relative_geometry(
     angle_deg: float,
     translation_scale: float = 0.15,
     focal_px: float = 500.0,
-    img_w: int = 256,
-    img_h: int = 256,
+    img_w: int = 64,
+    img_h: int = 64,
 ) -> torch.Tensor:
     """
-    Build a geometry label in the format VIVID expects (RealEstate10K style):
-    a 1-D tensor encoding [src_intrinsics(4), src_extrinsics(12),
-    tgt_intrinsics(4), tgt_extrinsics(12)] = 32 floats.
+    Build a 20-float geometry label using VIVID's compose_geometry().
 
-    Intrinsics: [fx, fy, cx, cy] normalised by image size.
-    Extrinsics: row-major 3x4 [R | t].
+    The model expects: [tgt2src_extrinsics(12), src_intrinsics(4), tgt_intrinsics(4)]
+    normalised via precomputed MEAN/STD statistics from training/utils.py.
+
+    tgt2src is the relative transform that maps target camera coords to source
+    camera coords (i.e. src_pose^{-1} @ tgt_pose, or just R|t when src=identity).
     """
-    fx = fy = focal_px / img_w
-    cx = cy = 0.5
+    vivid_root = str(VENDOR_DIR)
+    if vivid_root not in sys.path:
+        sys.path.insert(0, vivid_root)
+    from training.utils import compose_geometry
 
-    intrinsics = np.array([fx, fy, cx, cy], dtype=np.float32)
+    R = torch.from_numpy(_rotation_y(angle_deg))   # 3x3
+    t = torch.tensor(
+        [math.sin(math.radians(angle_deg)) * translation_scale, 0.0, 0.0]
+    ).reshape(3, 1)
+    tgt2src = torch.cat([R, t], dim=1).unsqueeze(0)  # [1, 3, 4]
 
-    src_ext = np.eye(3, 4, dtype=np.float32)  # identity pose
+    K = _make_K(focal_px, img_w, img_h).unsqueeze(0)  # [1, 3, 3]
 
-    R = _rotation_y(angle_deg)
-    t = np.array([math.sin(math.radians(angle_deg)) * translation_scale, 0, 0],
-                 dtype=np.float32).reshape(3, 1)
-    tgt_ext = np.hstack([R, t])
-
-    geom = np.concatenate([
-        intrinsics, src_ext.flatten(),
-        intrinsics, tgt_ext.flatten(),
-    ])
-    return torch.from_numpy(geom)
+    geom = compose_geometry(tgt2src, K, K, imsize=img_w)  # [1, 20]
+    return geom.squeeze(0)  # [20]
 
 
-def _generate_pose_arc(num_views: int, max_angle: float = 30.0) -> list[torch.Tensor]:
+def _generate_pose_arc(
+    num_views: int,
+    max_angle: float = 30.0,
+    focal_px: float = 500.0,
+    img_w: int = 64,
+    img_h: int = 64,
+) -> list[torch.Tensor]:
     """Generate *num_views* geometry labels spanning [-max_angle, +max_angle]."""
     if num_views == 1:
-        return [_make_relative_geometry(0.0)]
+        return [_make_relative_geometry(0.0, focal_px=focal_px, img_w=img_w, img_h=img_h)]
     angles = np.linspace(-max_angle, max_angle, num_views)
-    return [_make_relative_geometry(float(a)) for a in angles]
+    return [
+        _make_relative_geometry(float(a), focal_px=focal_px, img_w=img_w, img_h=img_h)
+        for a in angles
+    ]
 
 
 # ── Synthesizer ──────────────────────────────────────────────────────
@@ -179,11 +198,11 @@ class VIVIDSynthesizer(BaseSynthesizer):
         # encoder expects [0, 255] range
         src_latent = self.encoder.encode_latents(img_tensor)
 
-        focal_px = 500.0
+        focal_px = res / 2.0  # neutral default: 90-degree FOV
         if fov_deg is not None and fov_deg > 0:
             focal_px = (res / 2.0) / math.tan(math.radians(fov_deg / 2.0))
 
-        poses = _generate_pose_arc(num_views, max_angle=25.0)
+        poses = _generate_pose_arc(num_views, max_angle=25.0, focal_px=focal_px, img_w=res, img_h=res)
 
         saved: list[str] = []
         logger.info(f"Running VIVID inference for {num_views} target views …")

@@ -21,6 +21,7 @@ _REGISTRY: dict[str, str] = {
     "svd": "synthesizers.svd_synthesizer.SVDSynthesizer",
     "viewcrafter": "synthesizers.viewcrafter_synthesizer.ViewCrafterSynthesizer",
     "vivid": "synthesizers.vivid_synthesizer.VIVIDSynthesizer",
+    "panodreamer": "synthesizers.panodreamer_synthesizer.PanoDreamerSynthesizer",
 }
 
 AVAILABLE_MODELS = list(_REGISTRY.keys())
