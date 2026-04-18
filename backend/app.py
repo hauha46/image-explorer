@@ -71,6 +71,8 @@ async def lifespan(app: FastAPI):
         # endregion
         raise
 
+    print("\n>>> Frontend GUI ready at: http://localhost:9876/app <<<\n")
+
     yield
 
     print("Cleaning up ml model instances...")
