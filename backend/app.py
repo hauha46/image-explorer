@@ -47,29 +47,9 @@ global_model_instances = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # region agent log
-    import torch, json, time, os as _os; _dbg=r"c:\Users\bcliu\Documents\Northeastern\DeepLearning_Jiang\Final-Project\howie_dan_section\.cursor\debug.log"; _os.makedirs(_os.path.dirname(_dbg),exist_ok=True)
-    _d={"location":"app.py:lifespan","message":"torch_cuda_info","data":{"cuda_available":torch.cuda.is_available(),"torch_version":torch.__version__,"cuda_version":getattr(torch.version,"cuda","none"),"gpu_name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A","arch_list":str(getattr(torch.cuda,"get_arch_list",lambda:[])())},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"A"}
-    with open(_dbg,"a") as _f: _f.write(json.dumps(_d)+"\n")
-    # endregion
     print("Loading Dust3r model into memory...")
     global_model_instances["dust3r"] = Dust3rReconstructor()
-    # region agent log
-    _d2={"location":"app.py:lifespan:post-dust3r","message":"dust3r_loaded","data":{"success":True},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"B"}
-    with open(_dbg,"a") as _f: _f.write(json.dumps(_d2)+"\n")
-    # endregion
-    try:
-        global_model_instances["depth-pro"] = DepthProEstimator()
-        # region agent log
-        _d3={"location":"app.py:lifespan:post-depthpro","message":"depthpro_loaded","data":{"success":True},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"C"}
-        with open(_dbg,"a") as _f: _f.write(json.dumps(_d3)+"\n")
-        # endregion
-    except Exception as _e:
-        # region agent log
-        _d4={"location":"app.py:lifespan:depthpro-error","message":"depthpro_failed","data":{"error":str(_e)[:500]},"timestamp":int(time.time()*1000),"runId":"run2","hypothesisId":"C"}
-        with open(_dbg,"a") as _f: _f.write(json.dumps(_d4)+"\n")
-        # endregion
-        raise
+    global_model_instances["depth-pro"] = DepthProEstimator()
 
     print("\n>>> Frontend GUI ready at: http://localhost:9876/app <<<\n")
 

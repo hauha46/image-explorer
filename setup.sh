@@ -23,7 +23,7 @@ else
 fi
 
 # ── Step 1: Clone vendor repositories ────────────────────────────────
-echo -e "\n[1/5] Cloning vendor repositories..."
+echo -e "\n[1/6] Cloning vendor repositories..."
 mkdir -p "$VENDOR"
 
 clone_repo() {
@@ -49,7 +49,7 @@ clone_repo "sv3d-diffusers"        "https://github.com/chenguolin/sv3d-diffusers
 clone_repo "stable-virtual-camera" "https://github.com/Stability-AI/stable-virtual-camera.git" "--recursive"
 
 # ── Step 2: Download model checkpoints ───────────────────────────────
-echo -e "\n[2/5] Downloading model checkpoints..."
+echo -e "\n[2/6] Downloading model checkpoints..."
 
 DEPTHPRO_DIR="$VENDOR/DepthPro/checkpoints"
 DEPTHPRO_CKPT="$DEPTHPRO_DIR/depth_pro.pt"
@@ -70,30 +70,56 @@ else
 fi
 
 # ── Step 3: Install Python dependencies ──────────────────────────────
-echo -e "\n[3/5] Installing Python dependencies with uv..."
+echo -e "\n[3/6] Installing Python dependencies with uv..."
 uv sync
 
-# ── Step 4: Download DUSt3R checkpoint for ViewCrafter ───────────────
-echo -e "\n[4/5] Downloading DUSt3R checkpoint for ViewCrafter..."
+# ── Step 4: Install SEVA dependencies (Linux only) ───────────────────
+echo -e "\n[4/6] Installing SEVA dependencies (flash-attn + open-clip-torch)..."
+if [ "$(uname -s)" = "Linux" ]; then
+    if uv run python -c "import flash_attn" 2>/dev/null; then
+        echo "  flash-attn already installed, skipping."
+    else
+        TORCH_VER=$(uv run python -c "import torch; print(torch.__version__.split('+')[0])")
+        PY_VER=$(uv run python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+        WHEEL_URL="https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch${TORCH_VER}/flash_attn-2.8.3%2Bcu12torch${TORCH_VER}cxx11abiTRUE-${PY_VER}-${PY_VER}-linux_x86_64.whl"
+        echo "  Trying prebuilt flash-attn wheel for torch ${TORCH_VER} / ${PY_VER}..."
+        if uv pip install "$WHEEL_URL" 2>/dev/null; then
+            echo "  flash-attn installed from prebuilt wheel."
+        else
+            echo "  Prebuilt wheel not available. Compiling from source (needs CUDA toolkit + several minutes)..."
+            uv pip install flash-attn --no-build-isolation
+            echo "  flash-attn compiled and installed."
+        fi
+    fi
+    echo "  Installing additional SEVA dependencies..."
+    uv pip install open-clip-torch viser tyro fire splines "imageio[ffmpeg]" --quiet
+    echo "  SEVA dependencies installed."
+else
+    echo "  Skipping — flash-attn only builds on Linux. SEVA will not be available on this platform."
+fi
+
+# ── Step 5: Download DUSt3R checkpoint for ViewCrafter ───────────────
+echo -e "\n[5/6] Downloading DUSt3R checkpoint for ViewCrafter..."
 VC_CKPT_DIR="$VENDOR/ViewCrafter/checkpoints"
 DUST3R_CKPT="$VC_CKPT_DIR/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth"
 if [ ! -f "$DUST3R_CKPT" ]; then
     mkdir -p "$VC_CKPT_DIR"
+    echo "  Downloading from HuggingFace and converting to .pth format..."
+    DUST3R_VENDOR="$VENDOR/dust3r"
     uv run python -c "
-from huggingface_hub import hf_hub_download
-hf_hub_download(
-    'naver/DUSt3R_ViTLarge_BaseDecoder_512_dpt',
-    'DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth',
-    local_dir='$VC_CKPT_DIR',
-)
+import sys, torch
+sys.path.insert(0, '$DUST3R_VENDOR')
+from dust3r.model import AsymmetricCroCo3DStereo
+model = AsymmetricCroCo3DStereo.from_pretrained('naver/DUSt3R_ViTLarge_BaseDecoder_512_dpt')
+torch.save({'model': model.state_dict()}, '$DUST3R_CKPT')
+print('  DUSt3R checkpoint downloaded and saved as .pth')
 "
-    echo "  DUSt3R checkpoint downloaded."
 else
     echo "  DUSt3R ViewCrafter checkpoint already exists, skipping."
 fi
 
 # ── Step 5: HuggingFace login reminder ───────────────────────────────
-echo -e "\n[5/5] HuggingFace authentication"
+echo -e "\n[6/6] HuggingFace authentication"
 echo "  Some models (SVD, SEVA) are gated and require a HuggingFace account."
 echo "  If you haven't already, run:"
 echo "    uv run huggingface-cli login"
