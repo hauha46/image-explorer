@@ -22,6 +22,9 @@ _REGISTRY: dict[str, str] = {
     "viewcrafter": "synthesizers.viewcrafter_synthesizer.ViewCrafterSynthesizer",
     "vivid": "synthesizers.vivid_synthesizer.VIVIDSynthesizer",
     "panodreamer": "synthesizers.panodreamer_synthesizer.PanoDreamerSynthesizer",
+    "zero123pp": "synthesizers.zero123pp_synthesizer.Zero123PPSynthesizer",
+    "sv3d": "synthesizers.sv3d_synthesizer.SV3DSynthesizer",
+    "seva": "synthesizers.seva_synthesizer.SevaSynthesizer",
 }
 
 AVAILABLE_MODELS = list(_REGISTRY.keys())

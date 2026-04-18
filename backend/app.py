@@ -3,7 +3,7 @@ AI-Enhanced 3D Scene Reconstruction API
 
 Decomposes a single image into a 3D scene with:
 1. Depth Estimation (DepthPro)
-2. Novel View Synthesis (SVD / ViewCrafter / VIVID)
+2. Novel View Synthesis (SVD / ViewCrafter / VIVID / SEVA / SV3D / Zero123++)
 3. 3D Reconstruction (Dust3r)
 4. Scene Composition
 """
@@ -140,8 +140,9 @@ async def process_image(
     """
     Upload image and start 3D scene reconstruction.
 
-    ``model`` selects the NVS backend: ``svd`` | ``viewcrafter`` | ``vivid`` | ``panodreamer``.
-    ``prompt`` is an optional text prompt (used by ViewCrafter and PanoDreamer for scene guidance).
+    ``model`` selects the NVS backend: ``svd`` | ``viewcrafter`` | ``vivid`` | ``panodreamer`` | ``zero123pp`` | ``sv3d`` | ``seva``.
+    ``prompt`` is an optional text prompt (used by ViewCrafter and PanoDreamer for scene guidance;
+    ignored by SVD, Zero123++, SV3D, and SEVA).
     Returns session_id immediately.
     """
     if model not in AVAILABLE_MODELS:
@@ -221,7 +222,7 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         # 2. Novel View Synthesis
         update_status(session_id, "processing", 30, "Generating Novel Views")
         t0 = time.time()
-        needs_vram_offload = model_name in ("viewcrafter", "panodreamer")
+        needs_vram_offload = model_name in ("viewcrafter", "panodreamer", "zero123pp", "sv3d", "seva")
         if needs_vram_offload:
             import torch
             logger.info(
@@ -263,6 +264,21 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         update_status(session_id, "error", 0, str(e))
 
 
+@app.get("/views/{session_id}")
+async def get_views(session_id: str):
+    """Return the list of generated view image URLs for a session."""
+    import glob as _glob
+    views_dir = Path(f"uploads/{session_id}/views")
+    if not views_dir.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"No views found for session '{session_id}'"},
+        )
+    view_files = sorted(_glob.glob(str(views_dir / "view_*.png")))
+    urls = [f"/uploads/{session_id}/views/{Path(f).name}" for f in view_files]
+    return {"session_id": session_id, "views": urls, "count": len(urls)}
+
+
 @app.get("/")
 async def root():
     return {
@@ -270,8 +286,9 @@ async def root():
         "version": "4.0.0",
         "available_models": AVAILABLE_MODELS,
         "endpoints": {
-            "/process": "POST - Upload image (form fields: file, model)",
+            "/process": "POST - Upload image (form fields: file, model, prompt)",
             "/status/{session_id}": "GET - Check status",
+            "/views/{session_id}": "GET - List generated view image URLs",
             "/uploads/{session_id}/*": "GET - Assets",
         },
     }
