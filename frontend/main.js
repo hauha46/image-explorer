@@ -487,6 +487,7 @@ function setupControls() {
 }
 
 function onKeyDown(event) {
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
     switch (event.code) {
         case 'KeyW': case 'ArrowUp': keys.forward = true; break;
         case 'KeyS': case 'ArrowDown': keys.backward = true; break;
@@ -499,6 +500,7 @@ function onKeyDown(event) {
 }
 
 function onKeyUp(event) {
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
     switch (event.code) {
         case 'KeyW': case 'ArrowUp': keys.forward = false; break;
         case 'KeyS': case 'ArrowDown': keys.backward = false; break;
