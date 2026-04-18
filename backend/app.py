@@ -10,7 +10,7 @@ Decomposes a single image into a 3D scene with:
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import shutil
@@ -96,6 +96,9 @@ app.add_middleware(
 # Static files
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 
 
 
@@ -279,6 +282,12 @@ async def get_views(session_id: str):
     return {"session_id": session_id, "views": urls, "count": len(urls)}
 
 
+@app.get("/app")
+async def serve_app():
+    """Serve the frontend GUI."""
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
 @app.get("/")
 async def root():
     return {
@@ -286,6 +295,7 @@ async def root():
         "version": "4.0.0",
         "available_models": AVAILABLE_MODELS,
         "endpoints": {
+            "/app": "GET - Open the GUI in your browser",
             "/process": "POST - Upload image (form fields: file, model, prompt)",
             "/status/{session_id}": "GET - Check status",
             "/views/{session_id}": "GET - List generated view image URLs",

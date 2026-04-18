@@ -3,7 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ── Config ──────────────────────────────────────────────────────────
-const API_BASE = 'http://localhost:9876';
+const API_BASE = window.location.origin;
 const MOVE_SPEED = 0.05;    // Reduced base speed for better point cloud exploration
 const SPRINT_MULTIPLIER = 2.0;
 
@@ -33,6 +33,11 @@ const mode3dBtn = document.getElementById('mode-3d-btn');
 const orbitViewer = document.getElementById('orbit-viewer');
 const orbitCanvas = document.getElementById('orbit-canvas');
 const orbitFrameCounter = document.getElementById('orbit-frame-counter');
+const promptRow = document.getElementById('prompt-row');
+const promptInput = document.getElementById('prompt-input');
+const newSceneBtn = document.getElementById('new-scene-btn');
+
+const PROMPT_MODELS = ['viewcrafter', 'panodreamer'];
 
 let sceneLoaded = false;
 let currentSessionId = null;
@@ -85,9 +90,15 @@ function init() {
     });
     uploadBtn.addEventListener('click', handleUpload);
 
+    // Show/hide prompt row when model changes
+    modelSelect.addEventListener('change', () => {
+        promptRow.style.display = PROMPT_MODELS.includes(modelSelect.value) ? 'flex' : 'none';
+    });
+
     // Mode toggle
     modeOrbitBtn.addEventListener('click', () => switchMode('orbit'));
     mode3dBtn.addEventListener('click', () => switchMode('3d'));
+    newSceneBtn.addEventListener('click', resetToUpload);
 
     // Orbit viewer mouse/touch events
     orbitViewer.addEventListener('mousedown', onOrbitMouseDown);
@@ -114,6 +125,8 @@ async function handleUpload() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('model', modelSelect.value);
+    const prompt = promptInput.value.trim();
+    if (prompt) formData.append('prompt', prompt);
 
     try {
         const res = await fetch(`${API_BASE}/process`, { method: 'POST', body: formData });
@@ -179,6 +192,127 @@ function resetUploadUI() {
     progressBar.style.display = 'none';
     progressFill.style.width = '0%';
     progressText.innerText = '';
+}
+
+function resetToUpload() {
+    // Clear 3D scene
+    const toRemove = [];
+    scene.traverse((child) => {
+        if (child.isMesh || child.isPoints) toRemove.push(child);
+    });
+    toRemove.forEach(obj => {
+        obj.geometry?.dispose();
+        obj.material?.dispose();
+        obj.parent?.remove(obj);
+    });
+    camera.position.set(0, 0, 0);
+
+    // Clear orbit viewer state
+    orbitState.images = [];
+    orbitState.loaded = false;
+    orbitState.currentIndex = 0;
+
+    // Hide viewers
+    orbitViewer.style.display = 'none';
+    orbitFrameCounter.style.display = 'none';
+    renderer.domElement.style.display = 'none';
+    modeBar.style.display = 'none';
+    if (crosshair) crosshair.style.display = 'none';
+    if (controls.isLocked) controls.unlock();
+
+    // Restore upload panel
+    sceneLoaded = false;
+    currentSessionId = null;
+    uploadPanel.innerHTML = `
+      <h1>AI 3D Scene Reconstructor</h1>
+      <p>Upload an image to generate novel views and a 3D point cloud.</p>
+
+      <input type="file" id="file-input" accept="image/*">
+
+      <div class="form-row">
+        <label for="model-select">Model:</label>
+        <select id="model-select">
+          <option value="svd">SVD \u2014 Video Diffusion (fast, general)</option>
+          <option value="viewcrafter">ViewCrafter \u2014 Point Cloud Guided (text prompt)</option>
+          <option value="seva">SEVA \u2014 Stable Virtual Camera (orbit, best quality)</option>
+          <option value="sv3d">SV3D \u2014 Stable Video 3D (orbital, object-centric)</option>
+          <option value="zero123pp">Zero123++ \u2014 Multi-View Grid (6 views)</option>
+          <option value="vivid">VIVID \u2014 Video Diffusion</option>
+          <option value="panodreamer">PanoDreamer \u2014 Panoramic (text prompt)</option>
+        </select>
+      </div>
+
+      <div class="form-row" id="prompt-row" style="display: none;">
+        <label for="prompt-input">Prompt:</label>
+        <input type="text" id="prompt-input" placeholder="e.g. Rotating view of a building">
+      </div>
+
+      <button id="upload-btn" disabled>Generate Scene</button>
+
+      <div style="margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px;">
+        <p style="font-size: 12px; color: rgba(255,255,255,0.35);">Or load a pre-generated test scene:</p>
+        <button id="load-test-btn" class="secondary" style="margin-top: 8px;">Load Test Scene</button>
+      </div>
+
+      <div class="progress-bar" id="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-text" id="progress-text"></div>
+    `;
+    blocker.style.display = 'flex';
+
+    // Re-bind event listeners to the new DOM elements
+    rebindUploadListeners();
+}
+
+function rebindUploadListeners() {
+    const fi = document.getElementById('file-input');
+    const ub = document.getElementById('upload-btn');
+    const ms = document.getElementById('model-select');
+    const lb = document.getElementById('load-test-btn');
+    const pr = document.getElementById('prompt-row');
+    const pi = document.getElementById('prompt-input');
+
+    fi.addEventListener('change', () => { ub.disabled = !fi.files.length; });
+    ub.addEventListener('click', () => {
+        const file = fi.files[0];
+        if (!file) return;
+        ub.disabled = true;
+        ub.innerText = 'Uploading\u2026';
+        const pb = document.getElementById('progress-bar');
+        const pf = document.getElementById('progress-fill');
+        const pt = document.getElementById('progress-text');
+        pb.style.display = 'block';
+        pf.style.width = '5%';
+        pt.innerText = 'Uploading image\u2026';
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('model', ms.value);
+        const prompt = pi.value.trim();
+        if (prompt) formData.append('prompt', prompt);
+
+        fetch(`${API_BASE}/process`, { method: 'POST', body: formData })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok) throw new Error(data.error || 'Upload failed');
+                currentSessionId = data.session_id;
+                ub.innerText = 'Processing\u2026';
+                pollStatus(currentSessionId);
+            })
+            .catch(err => {
+                alert(`Error: ${err.message}`);
+                ub.disabled = false;
+                ub.innerText = 'Generate Scene';
+                pb.style.display = 'none';
+                pf.style.width = '0%';
+                pt.innerText = '';
+            });
+    });
+    ms.addEventListener('change', () => {
+        pr.style.display = PROMPT_MODELS.includes(ms.value) ? 'flex' : 'none';
+    });
+    lb.addEventListener('click', loadTestScene);
 }
 
 // ── Orbit Frame Viewer ──────────────────────────────────────────────

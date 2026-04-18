@@ -294,10 +294,38 @@
       pointer-events: none;
       display: none;
     }
+    /* ── Text Input ── */
+    input[type="text"] {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.08);
+      color: white;
+      font-size: 13px;
+      font-family: 'Inter', sans-serif;
+      width: 260px;
+    }
+
+    input[type="text"]::placeholder {
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    input[type="text"]:focus {
+      outline: none;
+      border-color: rgba(99, 102, 241, 0.5);
+    }
   </style>
 </head>
 
 <body>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
   <div id="info">Interactive 3D Scene Reconstruction</div>
 
   <div id="crosshair"></div>
@@ -318,14 +346,19 @@
       <div class="form-row">
         <label for="model-select">Model:</label>
         <select id="model-select">
-          <option value="svd">SVD</option>
-          <option value="viewcrafter">ViewCrafter</option>
-          <option value="seva">SEVA</option>
-          <option value="sv3d">SV3D</option>
-          <option value="zero123pp">Zero123++</option>
-          <option value="vivid">VIVID</option>
-          <option value="panodreamer">PanoDreamer</option>
+          <option value="svd">SVD — Video Diffusion (fast, general)</option>
+          <option value="viewcrafter">ViewCrafter — Point Cloud Guided (text prompt)</option>
+          <option value="seva">SEVA — Stable Virtual Camera (orbit, best quality)</option>
+          <option value="sv3d">SV3D — Stable Video 3D (orbital, object-centric)</option>
+          <option value="zero123pp">Zero123++ — Multi-View Grid (6 views)</option>
+          <option value="vivid">VIVID — Video Diffusion</option>
+          <option value="panodreamer">PanoDreamer — Panoramic (text prompt)</option>
         </select>
+      </div>
+
+      <div class="form-row" id="prompt-row" style="display: none;">
+        <label for="prompt-input">Prompt:</label>
+        <input type="text" id="prompt-input" placeholder="e.g. Rotating view of a building">
       </div>
 
       <button id="upload-btn" disabled>Generate Scene</button>
@@ -346,9 +379,11 @@
   <div id="mode-bar">
     <button class="secondary active" id="mode-orbit-btn">Orbit Frames</button>
     <button class="secondary" id="mode-3d-btn">3D Explore</button>
+    <span style="width: 1px; height: 20px; background: rgba(255,255,255,0.15); margin: 0 4px;"></span>
+    <button class="secondary" id="new-scene-btn">New Scene</button>
   </div>
 
-  <script type="module" src="/main.js"></script>
+  <script type="module" src="/static/main.js"></script>
 </body>
 
 </html>
