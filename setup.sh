@@ -79,7 +79,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     if uv run python -c "import flash_attn" 2>/dev/null; then
         echo "  flash-attn already installed, skipping."
     else
-        TORCH_VER=$(uv run python -c "import torch; print(torch.__version__.split('+')[0])")
+        TORCH_VER=$(uv run python -c "import torch; v=torch.__version__.split('+')[0]; parts=v.split('.'); print(f'{parts[0]}.{parts[1]}')")
         PY_VER=$(uv run python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
         WHEEL_URL="https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch${TORCH_VER}/flash_attn-2.8.3%2Bcu12torch${TORCH_VER}cxx11abiTRUE-${PY_VER}-${PY_VER}-linux_x86_64.whl"
         echo "  Trying prebuilt flash-attn wheel for torch ${TORCH_VER} / ${PY_VER}..."
@@ -92,7 +92,7 @@ if [ "$(uname -s)" = "Linux" ]; then
         fi
     fi
     echo "  Installing additional SEVA dependencies..."
-    uv pip install open-clip-torch viser tyro fire splines "imageio[ffmpeg]" --quiet
+    uv pip install open-clip-torch viser tyro fire ninja splines colorama "imageio[ffmpeg]" --quiet
     echo "  SEVA dependencies installed."
 else
     echo "  Skipping — flash-attn only builds on Linux. SEVA will not be available on this platform."

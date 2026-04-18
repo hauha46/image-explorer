@@ -117,8 +117,8 @@ Some models (SVD, SEVA) are gated and require a HuggingFace account.
 4. Log in:
 
 ```bash
-uv run huggingface-cli login
-# Paste your token when prompted
+uv run python -c "from huggingface_hub import login; login()"
+# Paste your token when prompted (input will be hidden)
 ```
 
 ---
@@ -166,14 +166,19 @@ cd ~/projects/image-explorer/backend
 uv run --project ~/projects/image-explorer uvicorn app:app --host 0.0.0.0 --port 9876
 ```
 
-**flash-attn compilation fails (OOM)**
-The source compilation is very memory-intensive. The setup script tries a prebuilt wheel first. If that fails and source compilation also fails, increase WSL memory in `%USERPROFILE%\.wslconfig`:
-```ini
-[wsl2]
-memory=16GB
-swap=8GB
+**flash-attn compilation fails / WSL crashes during setup**
+The source compilation is extremely memory-intensive and will crash (terminate) the entire WSL process. Always use the prebuilt wheel instead. For PyTorch 2.11 + Python 3.11 + CUDA 12:
+```bash
+uv pip install "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.11/flash_attn-2.8.3%2Bcu12torch2.11cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
 ```
-Then restart WSL: `wsl --shutdown`
+For other PyTorch versions, find the matching wheel at [github.com/lesj0610/flash-attention/releases](https://github.com/lesj0610/flash-attention/releases).
+
+**Missing module errors after WSL crash (e.g. `No module named 'colorama'`)**
+If WSL crashed mid-install, re-run the SEVA deps manually:
+```bash
+cd ~/projects/image-explorer
+uv pip install open-clip-torch viser tyro fire ninja splines colorama "imageio[ffmpeg]"
+```
 
 **Port 9876 already in use**
 Stop any existing server or pick a different port:

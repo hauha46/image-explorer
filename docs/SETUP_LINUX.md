@@ -100,8 +100,8 @@ Some models (SVD, SEVA) are gated and require a HuggingFace account.
 4. Log in:
 
 ```bash
-uv run huggingface-cli login
-# Paste your token when prompted
+uv run python -c "from huggingface_hub import login; login()"
+# Paste your token when prompted (input will be hidden)
 ```
 
 ---
@@ -148,7 +148,7 @@ cd image-explorer
 bash setup.sh
 
 # Login to HuggingFace (for gated models)
-uv run huggingface-cli login
+uv run python -c "from huggingface_hub import login; login()"
 
 # Run
 cd backend
@@ -163,13 +163,12 @@ uv run --project .. uvicorn app:app --host 0.0.0.0 --port 9876
 **"Warning, cannot find cuda-compiled version of RoPE2D"**
 Harmless warning from DUSt3R. Falls back to a slower PyTorch implementation. No impact on output quality.
 
-**flash-attn compilation fails**
-If the prebuilt wheel didn't match and source compilation fails:
-- Ensure `nvcc --version` works and matches CUDA 12.x
-- Ensure you have enough RAM (8 GB+) -- set `MAX_JOBS=1` to reduce memory usage:
-  ```bash
-  MAX_JOBS=1 uv pip install flash-attn --no-build-isolation
-  ```
+**flash-attn compilation fails / WSL crashes during install**
+The source compilation is very memory-intensive and will crash WSL if it runs out of memory. Always install from the prebuilt wheel instead. For PyTorch 2.11 + Python 3.11 + CUDA 12:
+```bash
+uv pip install "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.11/flash_attn-2.8.3%2Bcu12torch2.11cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
+```
+For other PyTorch versions, find the matching wheel at [github.com/lesj0610/flash-attention/releases](https://github.com/lesj0610/flash-attention/releases).
 
 **ModuleNotFoundError: No module named 'scene_processor'**
 You're running uvicorn from the wrong directory. Run from `backend/`:
