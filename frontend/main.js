@@ -1,14 +1,18 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ── Config ──────────────────────────────────────────────────────────
 const API_BASE = window.location.origin;
-const MOVE_SPEED = 0.05;    // Reduced base speed for better point cloud exploration
+const BASE_MOVE_SPEED = 0.05;
 const SPRINT_MULTIPLIER = 2.0;
 
 // ── State ───────────────────────────────────────────────────────────
-let scene, camera, renderer, controls;
+let scene, camera, renderer, fpsControls, orbit3dControls;
+let moveSpeed = BASE_MOVE_SPEED;
+let sceneCenter = new THREE.Vector3();
+let sceneRadius = 1;
 
 const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
@@ -30,6 +34,7 @@ const progressText = document.getElementById('progress-text');
 const modeBar = document.getElementById('mode-bar');
 const modeOrbitBtn = document.getElementById('mode-orbit-btn');
 const mode3dBtn = document.getElementById('mode-3d-btn');
+const modeFpsBtn = document.getElementById('mode-fps-btn');
 const orbitViewer = document.getElementById('orbit-viewer');
 const orbitCanvas = document.getElementById('orbit-canvas');
 const orbitFrameCounter = document.getElementById('orbit-frame-counter');
@@ -41,7 +46,7 @@ const PROMPT_MODELS = ['viewcrafter', 'panodreamer'];
 
 let sceneLoaded = false;
 let currentSessionId = null;
-let currentMode = 'orbit'; // 'orbit' or '3d'
+let currentMode = 'orbit'; // 'orbit', '3d', or 'fps'
 
 // ── Orbit Viewer State ──────────────────────────────────────────────
 const orbitState = {
@@ -61,7 +66,7 @@ function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111111);
 
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 5000);
     camera.position.set(0, 0, 0);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -75,10 +80,17 @@ function init() {
     const ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
     scene.add(ambientLight);
 
-    controls = new PointerLockControls(camera, document.body);
-    setupControls();
+    // FPS controls (PointerLock)
+    fpsControls = new PointerLockControls(camera, document.body);
+    setupFpsControls();
+    scene.add(fpsControls.object);
 
-    scene.add(controls.object);
+    // 3D Orbit controls (drag to rotate, scroll to zoom)
+    orbit3dControls = new OrbitControls(camera, renderer.domElement);
+    orbit3dControls.enableDamping = true;
+    orbit3dControls.dampingFactor = 0.12;
+    orbit3dControls.screenSpacePanning = true;
+    orbit3dControls.enabled = false;
 
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
@@ -90,17 +102,15 @@ function init() {
     });
     uploadBtn.addEventListener('click', handleUpload);
 
-    // Show/hide prompt row when model changes
     modelSelect.addEventListener('change', () => {
         promptRow.style.display = PROMPT_MODELS.includes(modelSelect.value) ? 'flex' : 'none';
     });
 
-    // Mode toggle
     modeOrbitBtn.addEventListener('click', () => switchMode('orbit'));
     mode3dBtn.addEventListener('click', () => switchMode('3d'));
+    modeFpsBtn.addEventListener('click', () => switchMode('fps'));
     newSceneBtn.addEventListener('click', resetToUpload);
 
-    // Orbit viewer mouse/touch events
     orbitViewer.addEventListener('mousedown', onOrbitMouseDown);
     window.addEventListener('mousemove', onOrbitMouseMove);
     window.addEventListener('mouseup', onOrbitMouseUp);
@@ -218,7 +228,8 @@ function resetToUpload() {
     renderer.domElement.style.display = 'none';
     modeBar.style.display = 'none';
     if (crosshair) crosshair.style.display = 'none';
-    if (controls.isLocked) controls.unlock();
+    if (fpsControls.isLocked) fpsControls.unlock();
+    orbit3dControls.enabled = false;
 
     // Restore upload panel
     sceneLoaded = false;
@@ -436,39 +447,53 @@ function onOrbitTouchEnd() {
 function switchMode(mode) {
     currentMode = mode;
 
+    // Deactivate all mode buttons
+    modeOrbitBtn.classList.remove('active');
+    mode3dBtn.classList.remove('active');
+    modeFpsBtn.classList.remove('active');
+
+    // Disable both 3D control sets by default
+    orbit3dControls.enabled = false;
+    if (fpsControls.isLocked) fpsControls.unlock();
+    if (crosshair) crosshair.style.display = 'none';
+
     if (mode === 'orbit') {
         modeOrbitBtn.classList.add('active');
-        mode3dBtn.classList.remove('active');
         orbitViewer.style.display = 'block';
         orbitFrameCounter.style.display = 'block';
         renderer.domElement.style.display = 'none';
-        if (crosshair) crosshair.style.display = 'none';
-        if (controls.isLocked) controls.unlock();
         info.innerText = 'Drag left/right to orbit around the scene';
         info.style.display = 'block';
         drawOrbitFrame();
-    } else {
-        modeOrbitBtn.classList.remove('active');
+    } else if (mode === '3d') {
         mode3dBtn.classList.add('active');
         orbitViewer.style.display = 'none';
         orbitFrameCounter.style.display = 'none';
         renderer.domElement.style.display = 'block';
-        info.innerText = 'Click to enter 3D view. WASD to move, Mouse to look, E/Q up/down, Shift sprint.';
+        orbit3dControls.enabled = true;
+        info.innerText = 'Drag to rotate. Scroll to zoom. Right-drag to pan.';
+        info.style.display = 'block';
+    } else if (mode === 'fps') {
+        modeFpsBtn.classList.add('active');
+        orbitViewer.style.display = 'none';
+        orbitFrameCounter.style.display = 'none';
+        renderer.domElement.style.display = 'block';
+        info.innerText = 'Click to enter FPS view. WASD to move, Mouse to look, E/Q up/down, Shift sprint.';
         info.style.display = 'block';
     }
 }
 
-// ── FPS Controls (unchanged) ────────────────────────────────────────
-function setupControls() {
-    controls.addEventListener('lock', () => {
-        if (sceneLoaded && currentMode === '3d') {
+// ── FPS Controls ────────────────────────────────────────────────────
+function setupFpsControls() {
+    fpsControls.addEventListener('lock', () => {
+        if (sceneLoaded && currentMode === 'fps') {
             blocker.style.display = 'none';
             if (crosshair) crosshair.style.display = 'block';
         }
     });
 
-    controls.addEventListener('unlock', () => {
-        if (sceneLoaded && currentMode === '3d') {
+    fpsControls.addEventListener('unlock', () => {
+        if (sceneLoaded && currentMode === 'fps') {
             blocker.style.display = 'flex';
             blocker.querySelector('.upload-container').innerHTML = `
                 <h1>Paused</h1>
@@ -480,8 +505,8 @@ function setupControls() {
     });
 
     blocker.addEventListener('click', (e) => {
-        if (sceneLoaded && currentMode === '3d' && !e.target.closest('button') && !e.target.closest('select') && !e.target.closest('input')) {
-            controls.lock();
+        if (sceneLoaded && currentMode === 'fps' && !e.target.closest('button') && !e.target.closest('select') && !e.target.closest('input')) {
+            fpsControls.lock();
         }
     });
 }
@@ -516,6 +541,9 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (currentMode === '3d' && orbit3dControls.enabled) {
+        orbit3dControls.update();
+    }
     if (currentMode === 'orbit' && orbitState.loaded) {
         drawOrbitFrame();
     }
@@ -528,7 +556,7 @@ function animate() {
     const delta = Math.min((time - prevTime) / 1000, 0.1);
     prevTime = time;
 
-    if (controls.isLocked) {
+    if (currentMode === 'fps' && fpsControls.isLocked) {
         velocity.x -= velocity.x * 8.0 * delta;
         velocity.z -= velocity.z * 8.0 * delta;
         velocity.y -= velocity.y * 8.0 * delta;
@@ -538,15 +566,19 @@ function animate() {
         direction.y = Number(keys.up) - Number(keys.down);
         direction.normalize();
 
-        const speed = MOVE_SPEED * (keys.sprint ? SPRINT_MULTIPLIER : 1.0);
+        const speed = moveSpeed * (keys.sprint ? SPRINT_MULTIPLIER : 1.0);
 
         if (keys.forward || keys.backward) velocity.z -= direction.z * speed * delta;
         if (keys.left || keys.right) velocity.x += direction.x * speed * delta;
         if (keys.up || keys.down) velocity.y += direction.y * speed * delta;
 
-        controls.moveRight(velocity.x);
-        controls.moveForward(-velocity.z);
+        fpsControls.moveRight(velocity.x);
+        fpsControls.moveForward(-velocity.z);
         camera.position.y += velocity.y;
+    }
+
+    if (currentMode === '3d' && orbit3dControls.enabled) {
+        orbit3dControls.update();
     }
 
     renderer.render(scene, camera);
@@ -571,19 +603,46 @@ function loadGLB(glbUrl) {
                 }
             });
 
+            // Compute bounding box/sphere and center the model at the origin
             const box = new THREE.Box3().setFromObject(model);
             const center = box.getCenter(new THREE.Vector3());
-
-            model.position.x += (model.position.x - center.x);
-            model.position.y += (model.position.y - center.y);
-            model.position.z += (model.position.z - center.z);
+            model.position.sub(center);
 
             scene.add(model);
-            camera.position.set(0, 0, 2);
+
+            // Recompute bounds after centering
+            const centeredBox = new THREE.Box3().setFromObject(model);
+            const sphere = centeredBox.getBoundingSphere(new THREE.Sphere());
+
+            sceneCenter.copy(sphere.center);
+            sceneRadius = sphere.radius || 1;
+
+            // Auto-frame camera: position it far enough back to see the whole model
+            const fov = camera.fov * (Math.PI / 180);
+            const dist = sceneRadius / Math.sin(fov / 2);
+            camera.position.set(
+                sceneCenter.x,
+                sceneCenter.y,
+                sceneCenter.z + dist * 1.3
+            );
+            camera.lookAt(sceneCenter);
+
+            // Extend far plane to cover large scenes
+            camera.near = Math.max(0.01, sceneRadius * 0.001);
+            camera.far = Math.max(5000, sceneRadius * 20);
+            camera.updateProjectionMatrix();
+
+            // Scale FPS move speed proportionally to scene size
+            moveSpeed = sceneRadius * 0.02;
+
+            // Point OrbitControls at the model center
+            orbit3dControls.target.copy(sceneCenter);
+            orbit3dControls.minDistance = sceneRadius * 0.1;
+            orbit3dControls.maxDistance = sceneRadius * 10;
+            orbit3dControls.update();
 
             sceneLoaded = true;
 
-            // If we don't have orbit frames, go straight to 3D mode
             if (!orbitState.loaded) {
                 blocker.style.display = 'none';
                 modeBar.style.display = 'flex';
