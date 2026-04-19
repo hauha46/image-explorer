@@ -166,21 +166,139 @@ async def process_image(
     return {"session_id": session_id, "model": model, "prompt": prompt}
 
 
+def _format_size(size_bytes: int) -> str:
+    """Human-readable file size."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes} B"
+
+
+def _list_files(directory: str, relative_to: str) -> list[tuple[str, int]]:
+    """Walk *directory* and return (relative_path, size_bytes) pairs."""
+    results = []
+    base = Path(relative_to)
+    for root, _dirs, files in os.walk(directory):
+        for fname in sorted(files):
+            fpath = Path(root) / fname
+            rel = fpath.relative_to(base)
+            results.append((str(rel), fpath.stat().st_size))
+    return sorted(results)
+
+
+def _write_run_report(
+    session_dir: str,
+    session_id: str,
+    model_name: str,
+    prompt: str | None,
+    img_path: str,
+    timestamp: str,
+    timings: dict[str, float],
+    artifacts: dict[str, list[str]],
+    fov_deg: float | None,
+) -> None:
+    """Write a comprehensive run_report.txt into the session directory."""
+    from PIL import Image as PILImage
+
+    sd = Path(session_dir)
+
+    try:
+        with PILImage.open(img_path) as img:
+            w, h = img.size
+        dims = f"{w}x{h}"
+    except Exception:
+        dims = "unknown"
+
+    lines: list[str] = []
+    lines.append("=" * 48)
+    lines.append(f" RUN REPORT \u2014 session {session_id}")
+    lines.append("=" * 48)
+    lines.append(f"Model:      {model_name}")
+    lines.append(f"Prompt:     {prompt or '(none)'}")
+    lines.append(f"Input:      {os.path.basename(img_path)} ({dims})")
+    lines.append(f"Timestamp:  {timestamp}")
+    lines.append("")
+
+    # Stage 1
+    lines.append("\u2500\u2500 Stage 1: Depth Estimation (DepthPro) \u2500\u2500")
+    lines.append(f"  Time: {timings.get('depth', 0):.2f}s")
+    if fov_deg is not None:
+        lines.append(f"  FOV:  {fov_deg:.1f} degrees")
+    lines.append("  Files:")
+    for f in artifacts.get("depth", []):
+        fp = sd / f
+        sz = _format_size(fp.stat().st_size) if fp.exists() else "?"
+        lines.append(f"    {f:<30s} ({sz})")
+    lines.append("")
+
+    # Stage 2
+    view_files = artifacts.get("nvs", [])
+    lines.append(f"\u2500\u2500 Stage 2: Novel View Synthesis ({model_name}) \u2500\u2500")
+    lines.append(f"  Time: {timings.get('nvs', 0):.2f}s")
+    lines.append(f"  Views generated: {len(view_files)}")
+    lines.append("  Files:")
+    for f in view_files:
+        fp = sd / f
+        sz = _format_size(fp.stat().st_size) if fp.exists() else "?"
+        lines.append(f"    {f:<30s} ({sz})")
+    lines.append("")
+
+    # Stage 3
+    lines.append("\u2500\u2500 Stage 3: 3D Reconstruction (DUSt3R) \u2500\u2500")
+    lines.append(f"  Time: {timings.get('reconstruction', 0):.2f}s")
+    lines.append("  Files:")
+    for f in artifacts.get("reconstruction", []):
+        fp = sd / f
+        sz = _format_size(fp.stat().st_size) if fp.exists() else "?"
+        lines.append(f"    {f:<30s} ({sz})")
+    lines.append("")
+
+    # Stage 4
+    lines.append("\u2500\u2500 Stage 4: Scene Composition \u2500\u2500")
+    lines.append(f"  Time: {timings.get('composition', 0):.2f}s")
+    lines.append("  Files:")
+    for f in artifacts.get("composition", []):
+        fp = sd / f
+        sz = _format_size(fp.stat().st_size) if fp.exists() else "?"
+        lines.append(f"    {f:<30s} ({sz})")
+    lines.append("")
+
+    # Summary
+    total_time = timings.get("total", 0)
+    all_files = _list_files(session_dir, session_dir)
+    total_size = sum(s for _, s in all_files)
+    lines.append("\u2500\u2500 Summary \u2500\u2500")
+    lines.append(f"  Total pipeline time: {total_time:.2f}s")
+    lines.append(f"  Total files: {len(all_files)}")
+    lines.append(f"  Total size:  {_format_size(total_size)}")
+    lines.append("")
+
+    # Full file manifest
+    lines.append("\u2500\u2500 Full File Manifest \u2500\u2500")
+    for rel, sz in all_files:
+        lines.append(f"  {rel:<40s} {_format_size(sz):>10s}")
+    lines.append("")
+
+    report_path = sd / "run_report.txt"
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info(f"Run report written to {report_path}")
+
+
 async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
                              model_name: str = "svd", prompt: str = None):
     """Execute the full NVS + 3D reconstruction pipeline."""
     import time
+    import glob as _glob
     from datetime import datetime
+
+    timings: dict[str, float] = {}
+    artifacts: dict[str, list[str]] = {}
+    fov_deg: float | None = None
+    timestamp = datetime.now().isoformat()
+
     try:
         t_pipeline = time.time()
-
-        meta_path = os.path.join(session_dir, f"{model_name}.txt")
-        with open(meta_path, "w", encoding="utf-8") as mf:
-            mf.write(f"session_id: {session_id}\n")
-            mf.write(f"model: {model_name}\n")
-            mf.write(f"prompt: {prompt or '(none)'}\n")
-            mf.write(f"input_image: {os.path.basename(img_path)}\n")
-            mf.write(f"timestamp: {datetime.now().isoformat()}\n")
 
         depth_model = global_model_instances["depth-pro"]
         dust3r_model = global_model_instances["dust3r"]
@@ -189,12 +307,13 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         synth_key = f"synth-{model_name}"
         t0 = time.time()
         if synth_key not in global_model_instances:
-            logger.info(f"Loading synthesizer '{model_name}' for the first time …")
+            logger.info(f"Loading synthesizer '{model_name}' for the first time \u2026")
             synthesizer = get_synthesizer(model_name)
             synthesizer.load_model(device="cuda")
             global_model_instances[synth_key] = synthesizer
         synthesizer = global_model_instances[synth_key]
-        logger.info(f"[Timer] Synthesizer load: {time.time() - t0:.2f}s")
+        timings["model_load"] = time.time() - t0
+        logger.info(f"[Timer] Synthesizer load: {timings['model_load']:.2f}s")
 
         processor = SceneProcessor(depth_model, dust3r_model, synthesizer)
 
@@ -202,7 +321,15 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         update_status(session_id, "processing", 10, "Estimating Depth")
         t0 = time.time()
         depth_arr = await processor.estimate_depth(img_path, session_dir)
-        logger.info(f"[Timer] Depth Estimation: {time.time() - t0:.2f}s")
+        timings["depth"] = time.time() - t0
+        logger.info(f"[Timer] Depth Estimation: {timings['depth']:.2f}s")
+
+        fov_deg = processor.scene_metadata.get("fov")
+        depth_files = []
+        for name in ("depth.png", "depth_metric.npy", "depth.npy"):
+            if (Path(session_dir) / name).exists():
+                depth_files.append(name)
+        artifacts["depth"] = depth_files
 
         # 2. Novel View Synthesis
         update_status(session_id, "processing", 30, "Generating Novel Views")
@@ -211,7 +338,7 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
         if needs_vram_offload:
             import torch
             logger.info(
-                f"Offloading DepthPro + project DUSt3R to CPU for {model_name} VRAM headroom …"
+                f"Offloading DepthPro + project DUSt3R to CPU for {model_name} VRAM headroom \u2026"
             )
             depth_model.set_device("cpu")
             dust3r_model.set_device("cpu")
@@ -226,22 +353,52 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
                 depth_model.set_device("cuda")
                 dust3r_model.set_device("cuda")
                 torch.cuda.empty_cache()
-        logger.info(f"[Timer] Novel View Synthesis: {time.time() - t0:.2f}s")
+        timings["nvs"] = time.time() - t0
+        logger.info(f"[Timer] Novel View Synthesis: {timings['nvs']:.2f}s")
+
+        views_dir = f"{session_dir}/views"
+        view_pngs = sorted(_glob.glob(os.path.join(views_dir, "*.png")))
+        artifacts["nvs"] = [
+            f"views/{Path(f).name}" for f in view_pngs
+        ]
 
         # 3. 3D Reconstruction (Dust3r)
         update_status(session_id, "processing", 60, "Reconstructing 3D Point Cloud")
         t0 = time.time()
-        views_dir = f"{session_dir}/views"
         await processor.reconstruct_3d(views_dir, session_dir)
-        logger.info(f"[Timer] 3D Reconstruction: {time.time() - t0:.2f}s")
+        timings["reconstruction"] = time.time() - t0
+        logger.info(f"[Timer] 3D Reconstruction: {timings['reconstruction']:.2f}s")
+
+        recon_files = []
+        for name in ("scene.glb",):
+            if (Path(session_dir) / name).exists():
+                recon_files.append(name)
+        artifacts["reconstruction"] = recon_files
 
         # 4. Scene Composition
         update_status(session_id, "processing", 90, "Composing Scene")
         t0 = time.time()
         processor.compose_scene(session_id, session_dir)
-        logger.info(f"[Timer] Scene Composition: {time.time() - t0:.2f}s")
+        timings["composition"] = time.time() - t0
+        logger.info(f"[Timer] Scene Composition: {timings['composition']:.2f}s")
 
-        logger.info(f"[Timer] Total pipeline: {time.time() - t_pipeline:.2f}s")
+        artifacts["composition"] = ["scene.json"]
+
+        timings["total"] = time.time() - t_pipeline
+        logger.info(f"[Timer] Total pipeline: {timings['total']:.2f}s")
+
+        _write_run_report(
+            session_dir=session_dir,
+            session_id=session_id,
+            model_name=model_name,
+            prompt=prompt,
+            img_path=img_path,
+            timestamp=timestamp,
+            timings=timings,
+            artifacts=artifacts,
+            fov_deg=fov_deg,
+        )
+
         update_status(session_id, "complete", 100, "Done")
 
     except Exception as e:
