@@ -1,36 +1,121 @@
-# Core server
+# ==========================================================================
+# image-explorer backend requirements (HARDENED PIN SET)
+# ==========================================================================
+# The pins below are NOT suggestions; they are the versions that make every
+# synthesizer (SEVA, ViewCrafter, DUSt3R, DepthPro) work together on a
+# torch-2.4.1 + CUDA-12.1 pod.  Each strict pin is here because loosening
+# it caused an A100 sweep to fail mid-run.  See scripts/setup_runpod.sh
+# comments for the exact bug each one fixes.
+#
+# Install order (handled by setup_runpod.sh):
+#   1. torch / torchvision from the PyTorch cu121 index
+#   2. this requirements.txt
+#   3. pytorch3d from source (needs torch already present)
+#   4. flash-attn (optional)
+#
+# If you bump any pin below, run `bash scripts/run_all.sh` end-to-end on a
+# fresh pod before merging -- the failure modes do not surface until deep
+# inside ViewCrafter's diffusion loop.
+# ==========================================================================
+
+# --- Core server ---------------------------------------------------------
 fastapi>=0.104.0
 uvicorn>=0.24.0
 python-multipart>=0.0.6
 
-# PyTorch (CUDA recommended)
-torch>=2.1.0
-torchvision>=0.16.0
+# --- PyTorch (installed separately from cu121 index; see setup_runpod.sh) -
+# Pinning is handled out-of-band because the CUDA wheel URL is not
+# representable in requirements.txt.  If you run `pip install -r` directly,
+# you will get CPU wheels.
+#
+# WARNING: DO NOT add `torch` / `torchvision` here, even with a version
+# pin.  If you do, `uv pip install --force-reinstall -r requirements.txt`
+# will either (a) fetch the CPU-only PyPI wheels, or (b) if any downstream
+# pin is loosened, re-resolve torch to the latest CUDA 13 build, which
+# fails to load on RunPod A100 pods whose driver is CUDA 12.x.  This has
+# already bitten us once.
+#
+# Instead, torch/torchvision are installed in setup_runpod.sh §6 via:
+#   uv pip install torch==2.4.1 torchvision==0.19.1 \
+#       --index-url https://download.pytorch.org/whl/cu121
 
-# AI Models
-transformers>=4.35.0
-diffusers>=0.24.0
-accelerate>=0.25.0
+# --- Diffusion stack -----------------------------------------------------
+# diffusers >=0.35 registers `_diffusers_flash_attn_3` as a torch
+# custom_op using `Tensor | None` hints that torch 2.4's infer_schema
+# rejects, crashing SEVA's AutoencoderKL import.
+diffusers==0.30.0
+accelerate>=0.25.0,<1.0
 safetensors>=0.4.0
-timm>=0.9.12
+timm==1.0.26
 
-# TripoSR Dependencies
+# --- HuggingFace infra ---------------------------------------------------
+transformers>=4.35.0,<5.0
+huggingface-hub>=0.19.0,<1.0
+
+# --- ViewCrafter / DynamiCrafter compatibility pin set -------------------
+# Each of these was pinned after a specific crash during an A100 sweep.
+#   open_clip_torch 2.24.x  -> ViewCrafter's lvdm/condition.py checks
+#       `self.model.visual.input_patchnorm`, an attribute that was renamed
+#       in 2.24+.  2.20.0 is the last version with the old name.
+#   pytorch_lightning 2.x   -> ViewCrafter inherits from LightningModule;
+#       the 1.x->2.x training-API rewrite breaks VC's checkpoint loading.
+#   av 12+                  -> torchvision.io.write_video assigns
+#       `frame.pict_type = "NONE"` (string); av >=12 made pict_type strict
+#       int/enum-only.  av 10 won't compile against Cython 3; av 11 does.
+#   moviepy 2.x             -> 2.0 was a full API rewrite; VC uses 1.x APIs.
+#   pillow 10+              -> removed Image.ANTIALIAS, which DUSt3R's
+#       `center_crop_pil_image` still references.
+#   numpy 2.x               -> removed np.bool / np.int / np.float aliases;
+#       a lot of 2023-era CV code in the vendor trees still uses them.
+open-clip-torch==2.20.0
+pytorch-lightning>=1.9.0,<2.0
+av==11.0.0
+moviepy>=1.0,<2.0
+Pillow>=9.0,<10.0
+numpy>=1.24,<2.0
+
+# --- 3D / geometry -------------------------------------------------------
 trimesh>=4.0.0
 rembg>=2.0.50
-omegaconf>=2.3.0
-einops>=0.7.0
+omegaconf==2.3.0
+einops>=0.7.0,<0.9.0
+# open3d powers Stage 5 mesh generation (ball-pivoting surface reconstruction
+# in backend/mesh_generator.py).  ~400 MB install, pulls its own numpy/pyyaml.
+open3d>=0.18.0,<0.20.0
 
-# Segmentation & Detection
+# --- Image & 3D processing -----------------------------------------------
+opencv-python>=4.8.0,<5.0
+scipy>=1.11.0,<2.0
+scikit-image>=0.22.0,<1.0
+
+# --- Segmentation / detection (optional) --------------------------------
 # segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
-ultralytics>=8.0.0
+ultralytics>=8.0.0,<9.0
 
-# Image & 3D Processing
-opencv-python>=4.8.0
-numpy>=1.24.0
-Pillow>=10.0.0
-scipy>=1.11.0
-open3d>=0.17.0
+# --- Video I/O (pins tied to av 11) --------------------------------------
+imageio>=2.31.0,<3.0
+imageio-ffmpeg>=0.4.9,<1.0
+decord>=0.6.0,<1.0
 
-# Utils
+# --- SEVA / ViewCrafter / DUSt3R runtime helpers -------------------------
+# These are imported ad-hoc from the vendor trees; leaving them out of the
+# pin set caused ~7 min of "ModuleNotFoundError: No module named 'colorama'"
+# style fails in the first A100 sweep.
+kornia>=0.7,<0.9
+roma>=1.4
+colorama>=0.4
+viser>=0.2
+tyro>=0.8
+fire>=0.5
+ninja>=1.11
+splines>=0.3
+gradio>=3.50,<5.0
+
+# --- CLIP experiment (text-reconditioning study) -------------------------
+lpips>=0.1.4
+
+# --- Utils / analysis ----------------------------------------------------
 tqdm>=4.66.0
-huggingface-hub>=0.19.0
+pandas>=2.1.0,<3.0
+matplotlib>=3.8.0,<4.0
+pyarrow>=14.0.0  # optional, enables parquet writes in the sweep summary

@@ -15,6 +15,7 @@ Requires:
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 import sys
@@ -41,16 +42,47 @@ def _ensure_vendor_on_path() -> None:
         sys.path.insert(0, seva_root)
 
 
+DEFAULT_NEUTRAL_PROMPT = "a photo of a living room interior"
+DEFAULT_CLIP_LAMBDA = 0.2
+DEFAULT_NUM_STEPS = 50
+
+# Allowed --dtype aliases -> (torch dtype, SEVA_AUTOCAST_DTYPE env string)
+_DTYPE_ALIASES: dict[str, tuple[torch.dtype, str]] = {
+    "fp32": (torch.float32, "float16"),  # autocast still fp16 by default
+    "float32": (torch.float32, "float16"),
+    "fp16": (torch.float16, "float16"),
+    "float16": (torch.float16, "float16"),
+    "half": (torch.float16, "float16"),
+    "bf16": (torch.bfloat16, "bfloat16"),
+    "bfloat16": (torch.bfloat16, "bfloat16"),
+}
+
+
 class SevaSynthesizer(BaseSynthesizer):
     name = "seva"
 
-    def __init__(self):
+    def __init__(
+        self,
+        neutral_prompt: str = DEFAULT_NEUTRAL_PROMPT,
+        clip_lambda: float = DEFAULT_CLIP_LAMBDA,
+        num_steps: int = DEFAULT_NUM_STEPS,
+        dtype: str = "fp32",
+    ):
         self.model = None
         self.ae = None
         self.conditioner = None
         self.denoiser = None
         self.device = "cpu"
         self._compile = False
+        self.neutral_prompt = neutral_prompt
+        self.clip_lambda = clip_lambda
+        self.num_steps = int(num_steps)
+        if dtype not in _DTYPE_ALIASES:
+            raise ValueError(
+                f"Unknown dtype {dtype!r}. Allowed: {sorted(_DTYPE_ALIASES)}"
+            )
+        self.dtype_name = dtype
+        self.torch_dtype, self._autocast_env = _DTYPE_ALIASES[dtype]
 
     # ------------------------------------------------------------------
     def load_model(self, device: str = "cuda") -> None:
@@ -74,7 +106,13 @@ class SevaSynthesizer(BaseSynthesizer):
             os.environ["TORCHINDUCTOR_AUTOGRAD_CACHE"] = "1"
             os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 
-        logger.info(f"Loading SEVA model (v1.1) from {HF_MODEL_ID} …")
+        # Tell seva.eval which autocast dtype to use (defaults to fp16).
+        os.environ["SEVA_AUTOCAST_DTYPE"] = self._autocast_env
+
+        logger.info(
+            f"Loading SEVA model (v1.1) from {HF_MODEL_ID} "
+            f"(weights dtype={self.dtype_name}, autocast={self._autocast_env}) …"
+        )
         self.model = SGMWrapper(
             seva_load_model(
                 model_version=1.1,
@@ -88,6 +126,17 @@ class SevaSynthesizer(BaseSynthesizer):
         self.ae = AutoEncoder(chunk_size=1).to(device)
         self.conditioner = CLIPConditioner().to(device)
         self.denoiser = DiscreteDenoiser(num_idx=1000, device=device)
+
+        # Cast the big denoiser backbone to the requested dtype.  The AE and
+        # CLIP conditioner are small and numerically sensitive, so we keep
+        # them in fp32 and rely on autocast for those ops.
+        if self.torch_dtype != torch.float32:
+            logger.info(
+                "Casting SEVA backbone weights to %s (saves per-op cast "
+                "overhead and keeps FLASH kernels engaged).",
+                self.torch_dtype,
+            )
+            self.model = self.model.to(self.torch_dtype)
 
         if self._compile:
             self.model = torch.compile(self.model, dynamic=False)
@@ -105,15 +154,69 @@ class SevaSynthesizer(BaseSynthesizer):
         depth_map: Optional[np.ndarray] = None,
         fov_deg: Optional[float] = None,
         prompt: Optional[str] = None,
+        neutral_prompt: Optional[str] = None,
+        clip_lambda: Optional[float] = None,
+        num_steps: Optional[int] = None,
     ) -> list[str]:
+        """
+        Generate novel views with optional CLIP-text re-conditioning.
+
+        When ``prompt`` is provided, a unit-norm direction
+        ``encode_text(prompt) - encode_text(neutral_prompt)`` is added to the
+        pooled CLIP image embedding before it enters SEVA's cross-attention:
+
+            z_tilde = z_img + clip_lambda * ||z_img|| * delta
+
+        ``neutral_prompt`` and ``clip_lambda`` default to the synthesizer's
+        instance-level defaults (``self.neutral_prompt`` / ``self.clip_lambda``).
+        """
         if self.model is None:
             raise RuntimeError("SEVA model not loaded. Call load_model() first.")
 
+        eff_neutral = neutral_prompt if neutral_prompt is not None else self.neutral_prompt
+        eff_lambda = float(clip_lambda) if clip_lambda is not None else float(self.clip_lambda)
+
+        clip_direction_active = False
         if prompt:
-            logger.info("SEVA is image-conditioned only — ignoring prompt.")
+            try:
+                delta = self.conditioner.encode_text_direction(prompt, eff_neutral)
+                self.conditioner.set_direction(delta, eff_lambda)
+                clip_direction_active = True
+                logger.info(
+                    "SEVA CLIP text-reconditioning ON | prompt=%r neutral=%r lambda=%.3f",
+                    prompt,
+                    eff_neutral,
+                    eff_lambda,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "Failed to set CLIP text direction (%s); falling back to image-only.",
+                    exc,
+                )
+                clip_direction_active = False
 
         _ensure_vendor_on_path()
 
+        eff_num_steps = int(num_steps) if num_steps is not None else int(self.num_steps)
+
+        try:
+            return self._run_generation(
+                image_path=image_path,
+                output_dir=output_dir,
+                num_views=num_views,
+                num_steps=eff_num_steps,
+            )
+        finally:
+            if clip_direction_active and self.conditioner is not None:
+                self.conditioner.set_direction(None, 0.0)
+
+    def _run_generation(
+        self,
+        image_path: str,
+        output_dir: str,
+        num_views: int,
+        num_steps: int = DEFAULT_NUM_STEPS,
+    ) -> list[str]:
         from seva.eval import (
             infer_prior_stats,
             run_one_scene,
@@ -143,7 +246,7 @@ class SevaSynthesizer(BaseSynthesizer):
                 "guider_types": 1,
                 "cfg": 4.0,
                 "camera_scale": 2.0,
-                "num_steps": 50,
+                "num_steps": int(num_steps),
                 "cfg_min": 1.2,
                 "encoding_t": 1,
                 "decoding_t": 1,
@@ -184,6 +287,32 @@ class SevaSynthesizer(BaseSynthesizer):
         anchor_c2ws = c2ws[[round(ind) for ind in anchor_indices]]
         anchor_Ks = Ks[[round(ind) for ind in anchor_indices]]
 
+        # Persist the full camera trajectory so downstream tooling (report
+        # figures, offline metrics, alternate viewers) can reproduce the orbit
+        # without re-running SEVA.  c2ws is (T, 4, 4), Ks is (T, 3, 3).
+        try:
+            c2ws_np = c2ws.cpu().numpy() if hasattr(c2ws, "cpu") else np.asarray(c2ws)
+            fovs_np = fovs.cpu().numpy() if hasattr(fovs, "cpu") else np.asarray(fovs)
+            trajectory = {
+                "backend": "seva",
+                "task": "img2trajvid_s-prob",
+                "traj_prior": "orbit",
+                "fov_deg_input": float(fov_deg) if fov_deg is not None else None,
+                "aspect_ratio": float(aspect_ratio),
+                "num_targets": int(num_targets),
+                "num_frames": int(T),
+                "num_anchors": int(num_anchors),
+                "anchor_indices": [float(i) for i in anchor_indices],
+                "fovs_rad": fovs_np.tolist(),
+                "c2ws": c2ws_np.tolist(),
+                "Ks": Ks.tolist(),
+            }
+            (views_dir / "trajectory.json").write_text(
+                json.dumps(trajectory, indent=2), encoding="utf-8"
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("SEVA: failed to write views/trajectory.json: %s", exc)
+
         save_path = str(views_dir / "_seva_work")
 
         image_cond = {
@@ -199,7 +328,8 @@ class SevaSynthesizer(BaseSynthesizer):
 
         logger.info(
             f"Running SEVA inference (img2trajvid_s-prob, orbit, "
-            f"{num_targets + 1} frames) …"
+            f"{num_targets + 1} frames, num_steps={num_steps}, "
+            f"dtype={self.dtype_name}) …"
         )
         video_path_generator = run_one_scene(
             "img2trajvid_s-prob",
@@ -219,9 +349,21 @@ class SevaSynthesizer(BaseSynthesizer):
         for _ in video_path_generator:
             pass
 
-        raw_frames = sorted(glob.glob(os.path.join(save_path, "samples-rgb", "*.png")))
-        if not raw_frames:
-            raw_frames = sorted(glob.glob(os.path.join(save_path, "*.png")))
+        # SEVA writes PNGs to different subdirectories depending on the
+        # scene mode: historically ``samples-rgb/*.png`` right under
+        # ``save_path`` but newer releases use ``first-pass/samples-rgb/*.png``.
+        # Search both shapes (and any deeper ``samples-rgb`` folder) so future
+        # layout changes don't silently produce empty ``views/``.
+        search_roots = [
+            os.path.join(save_path, "samples-rgb", "*.png"),
+            os.path.join(save_path, "**", "samples-rgb", "*.png"),
+            os.path.join(save_path, "*.png"),
+        ]
+        raw_frames: list[str] = []
+        for pattern in search_roots:
+            raw_frames = sorted(glob.glob(pattern, recursive=True))
+            if raw_frames:
+                break
 
         if num_views >= len(raw_frames):
             indices = list(range(len(raw_frames)))

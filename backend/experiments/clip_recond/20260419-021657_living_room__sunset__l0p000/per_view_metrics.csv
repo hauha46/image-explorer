@@ -1,0 +1,11 @@
+clip_score,frame_idx,lpips_vs_input,view_path
+0.3028346598148346,0,0.513160228729248,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_000.png
+0.2971397042274475,1,0.67612224817276,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_001.png
+0.2761877775192261,2,0.6710669994354248,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_002.png
+0.2620263695716858,3,0.7200515270233154,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_003.png
+0.2678568363189697,4,0.7069706916809082,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_004.png
+0.3185141384601593,5,0.6807146668434143,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_005.png
+0.31501322984695435,6,0.7413816452026367,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_006.png
+0.2817838191986084,7,0.7561843395233154,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_007.png
+0.3148214817047119,8,0.660554826259613,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_008.png
+0.30248165130615234,9,0.5142180919647217,backend/experiments/clip_recond/20260419-021657_living_room__sunset__l0p000/views/view_009.png

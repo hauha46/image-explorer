@@ -1,0 +1,17 @@
+{
+  "run_id": "living_room__sunset__l0p100",
+  "timestamp": "2026-04-19T03:11:15.960811",
+  "input_image": "backend/images/standard_benchmark.jpg",
+  "input_label": "living_room",
+  "prompt": "a living room at sunset with warm golden hour light",
+  "prompt_label": "sunset",
+  "neutral_prompt": "a photo of a living room interior",
+  "seed": 23,
+  "cfg": 4.0,
+  "num_views": 10,
+  "num_steps": 25,
+  "dtype": "bf16",
+  "model_version": "seva-1.1",
+  "git_sha": "a940dcfb922a9505a7cbdf8951d6964205b827c7",
+  "lambda": 0.1
+}

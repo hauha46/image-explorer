@@ -1,0 +1,11 @@
+clip_score,frame_idx,lpips_vs_input,view_path
+0.2898017168045044,0,0.5159106254577637,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_000.png
+0.26837286353111267,1,0.6585696339607239,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_001.png
+0.2797975540161133,2,0.6546826362609863,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_002.png
+0.2618473768234253,3,0.7130504846572876,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_003.png
+0.2857360541820526,4,0.7134937644004822,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_004.png
+0.3013691306114197,5,0.7045230865478516,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_005.png
+0.3071223795413971,6,0.750656247138977,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_006.png
+0.2571672201156616,7,0.7685456871986389,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_007.png
+0.32362672686576843,8,0.6686221361160278,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_008.png
+0.2941628694534302,9,0.5122623443603516,backend/experiments/clip_recond/20260418-234020_bench__sunset__l0p000/views/view_009.png

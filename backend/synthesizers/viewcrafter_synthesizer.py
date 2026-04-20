@@ -17,6 +17,7 @@ Requires:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -133,6 +134,9 @@ class ViewCrafterSynthesizer(BaseSynthesizer):
     def __init__(self):
         self.model = None
         self.device = "cuda"
+        # Populated by generate_views() so callers (e.g. backend/app.py) can
+        # log the exact configuration used for a given session.
+        self.last_run_params: Optional[dict] = None
 
     # ------------------------------------------------------------------
     def load_model(self, device: str = "cuda") -> None:
@@ -189,6 +193,84 @@ class ViewCrafterSynthesizer(BaseSynthesizer):
             video_length=num_views,
             prompt=prompt or "Rotating view of a scene",
         )
+
+        # Stash the effective config so backend/app.py can log it in
+        # run_report.txt / run_info.json / sessions_index.jsonl.  Mirrors the
+        # approach SEVA takes with dtype_name / num_steps.
+        self.last_run_params = {
+            "backend": "viewcrafter",
+            "mode": opts.mode,
+            "video_length": int(opts.video_length),
+            "prompt": opts.prompt,
+            "trajectory": {
+                "d_phi": list(opts.d_phi),
+                "d_theta": list(opts.d_theta),
+                "d_r": list(opts.d_r),
+                "d_x": list(opts.d_x),
+                "d_y": list(opts.d_y),
+                "elevation": float(opts.elevation),
+                "center_scale": float(opts.center_scale),
+            },
+            "diffusion": {
+                "ddim_steps": int(opts.ddim_steps),
+                "ddim_eta": float(opts.ddim_eta),
+                "cfg": float(opts.unconditional_guidance_scale),
+                "guidance_rescale": float(opts.guidance_rescale),
+                "frame_stride": int(opts.frame_stride),
+                "seed": int(opts.seed),
+                "height": int(opts.height),
+                "width": int(opts.width),
+                "timestep_spacing": opts.timestep_spacing,
+                "perframe_ae": bool(opts.perframe_ae),
+                "n_samples": int(opts.n_samples),
+            },
+            "point_cloud": {
+                "bg_trd": float(opts.bg_trd),
+                "dpt_trd": float(opts.dpt_trd),
+                "mask_pc": bool(opts.mask_pc),
+                "reduce_pc": bool(opts.reduce_pc),
+                "mask_image": bool(opts.mask_image),
+            },
+            "checkpoints": {
+                "diffusion_ckpt": opts.ckpt_path,
+                "dust3r_ckpt": opts.model_path,
+                "config": opts.config,
+            },
+            "dust3r": {
+                "batch_size": int(opts.batch_size),
+                "schedule": opts.schedule,
+                "niter": int(opts.niter),
+                "lr": float(opts.lr),
+                "min_conf_thr": float(opts.min_conf_thr),
+            },
+        }
+
+        # Dump parametric trajectory descriptor for parity with SEVA's
+        # per-frame c2ws/Ks trajectory.json (ViewCrafter's public API does
+        # not expose the computed per-frame poses).
+        try:
+            (views_dir / "trajectory.json").write_text(
+                json.dumps(
+                    {
+                        "backend": "viewcrafter",
+                        "mode": opts.mode,
+                        "video_length": int(opts.video_length),
+                        "d_phi": list(opts.d_phi),
+                        "d_theta": list(opts.d_theta),
+                        "d_r": list(opts.d_r),
+                        "d_x": list(opts.d_x),
+                        "d_y": list(opts.d_y),
+                        "elevation": float(opts.elevation),
+                        "center_scale": float(opts.center_scale),
+                        "height": int(opts.height),
+                        "width": int(opts.width),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("ViewCrafter: failed to write views/trajectory.json: %s", exc)
 
         logger.info(f"Running ViewCrafter (single_view_target, {num_views} frames) …")
         vc = ViewCrafter(opts, gradio=False)

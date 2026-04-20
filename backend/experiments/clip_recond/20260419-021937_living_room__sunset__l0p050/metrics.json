@@ -1,0 +1,10 @@
+{
+  "mean_clip_score": 0.2975064218044281,
+  "clip_score_view0": 0.29455509781837463,
+  "mean_lpips_vs_input": 0.6551574468612671,
+  "self_consistency_chamfer": NaN,
+  "self_consistency_cpsnr": NaN,
+  "self_consistency_cssim": NaN,
+  "n_even": 0,
+  "n_odd": 0
+}

@@ -32,8 +32,16 @@ class SceneProcessor:
 
     async def generate_novel_views(self, image_path: str, output_dir: str,
                                    depth_map=None, num_views: int = 8,
-                                   prompt: str = None):
-        """Step 2: Generate multi-view images using the configured NVS backend."""
+                                   prompt: str = None,
+                                   clip_lambda: float | None = None,
+                                   neutral_prompt: str | None = None):
+        """Step 2: Generate multi-view images using the configured NVS backend.
+
+        ``clip_lambda`` and ``neutral_prompt`` are forwarded to synthesizers
+        that support CLIP text re-conditioning (currently only SEVA).  They are
+        silently ignored by synthesizers whose ``generate_views`` signature
+        does not accept them.
+        """
         views_dir = Path(output_dir) / "views"
         views_dir.mkdir(parents=True, exist_ok=True)
 
@@ -43,14 +51,22 @@ class SceneProcessor:
             return [str(views_dir / "view_000.png")]
 
         fov = self.scene_metadata.get("fov")
-        view_paths = self.synthesizer.generate_views(
-            image_path=image_path,
-            output_dir=output_dir,
-            num_views=num_views,
-            depth_map=depth_map,
-            fov_deg=fov,
-            prompt=prompt,
-        )
+        synth_kwargs = {
+            "image_path": image_path,
+            "output_dir": output_dir,
+            "num_views": num_views,
+            "depth_map": depth_map,
+            "fov_deg": fov,
+            "prompt": prompt,
+        }
+        import inspect
+        sig = inspect.signature(self.synthesizer.generate_views)
+        if "clip_lambda" in sig.parameters and clip_lambda is not None:
+            synth_kwargs["clip_lambda"] = clip_lambda
+        if "neutral_prompt" in sig.parameters and neutral_prompt is not None:
+            synth_kwargs["neutral_prompt"] = neutral_prompt
+
+        view_paths = self.synthesizer.generate_views(**synth_kwargs)
 
         # Always include the original image so DUSt3R has an anchor view
         original_in_views = views_dir / "input_original.png"
