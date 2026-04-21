@@ -236,3 +236,4 @@ __marimo__/
 # Node Packages
 package.json
 package-lock.json
+backend/vendor1
