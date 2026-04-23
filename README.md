@@ -58,6 +58,11 @@ If you want to see the frontend (note: the frontend is not connected to the pipe
 bash run.sh
 ```
 
+After running the pipeline, you can view the final glb files here: https://gltf-viewer.donmccurdy.com/
+
+Or, you can try out our frontend, as we allow scene uploads.
+
+
 
 ## Top-Level File Tree
 
