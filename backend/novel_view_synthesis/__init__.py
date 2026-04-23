@@ -25,6 +25,7 @@ _REGISTRY: dict[str, str] = {
     "zero123pp": "novel_view_synthesis.zero123pp_synthesizer.Zero123PPSynthesizer",
     "sv3d": "novel_view_synthesis.sv3d_synthesizer.SV3DSynthesizer",
     "seva": "novel_view_synthesis.seva_synthesizer.SevaSynthesizer",
+    "seva_4070ti": "novel_view_synthesis.seva_synthesizer_4070ti.SevaSynthesizer",
 }
 
 AVAILABLE_MODELS = list(_REGISTRY.keys())

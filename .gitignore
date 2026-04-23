@@ -244,3 +244,7 @@ backend/test_vggt_depthpro_output
 backend/outputs
 backend/duster_images
 backend/vendor3
+backend/reconstruction/outputs
+backend/reconstruction/outputs/
+
+final_demo_outputs

@@ -246,6 +246,7 @@ function resetToUpload() {
           <option value="svd">SVD \u2014 Video Diffusion (fast, general)</option>
           <option value="viewcrafter">ViewCrafter \u2014 Point Cloud Guided (text prompt)</option>
           <option value="seva">SEVA \u2014 Stable Virtual Camera (orbit, best quality)</option>
+          <option value="seva_4070ti">SEVA (4070 Ti Optimized) \u2014 faster, lighter</option>
           <option value="sv3d">SV3D \u2014 Stable Video 3D (orbital, object-centric)</option>
           <option value="zero123pp">Zero123++ \u2014 Multi-View Grid (6 views)</option>
           <option value="vivid">VIVID \u2014 Video Diffusion</option>

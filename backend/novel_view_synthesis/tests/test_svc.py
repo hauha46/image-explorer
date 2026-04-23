@@ -1,10 +1,16 @@
+import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import time
 import sys
+from pathlib import Path
+
+# Add backend/ to Python path so 'novel_view_synthesis' is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import logging
 import traceback
-from novel_view_synthesis.seva_synthesizer import SevaSynthesizer
-
-import os
+from novel_view_synthesis.seva_synthesizer_4070ti import SevaSynthesizer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,11 +27,11 @@ def main():
         traceback.print_exc()
         return
 
-    print("Starting novel view generation from 'room.jpg'...")
+    print("Starting novel view generation")
     start_time = time.time()
     
     try:
-        image_file = os.path.join(os.path.dirname(__file__), '../benchmark_image_1.jpg')
+        image_file = os.path.join(os.path.dirname(__file__), '../../../benchmark_image_1.jpg')
         
         # Utilizing the existing 'room.jpg' available in backend/novel_view_synthesis/
         views = synth.generate_views(

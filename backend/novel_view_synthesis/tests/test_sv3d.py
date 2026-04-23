@@ -1,5 +1,10 @@
 import time
 import sys
+from pathlib import Path
+
+# Add backend/ to Python path so 'novel_view_synthesis' is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import logging
 from novel_view_synthesis.sv3d_synthesizer_4070ti import SV3DSynthesizer
 import traceback

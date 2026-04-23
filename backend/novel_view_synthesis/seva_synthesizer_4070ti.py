@@ -75,15 +75,16 @@ class SevaSynthesizer(BaseSynthesizer):
             os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 
         logger.info(f"Loading SEVA model (v1.1) from {HF_MODEL_ID} …")
-        self.model = SGMWrapper(
-            seva_load_model(
-                model_version=1.1,
-                pretrained_model_name_or_path=HF_MODEL_ID,
-                weight_name="model.safetensors",
-                device="cpu",
-                verbose=True,
-            ).eval()
-        ).to(device)
+        raw_model = seva_load_model(
+            model_version=1.1,
+            pretrained_model_name_or_path=HF_MODEL_ID,
+            weight_name="model.safetensors",
+            device="cpu",
+            verbose=True,
+        ).eval()
+        # Cast backbone to fp16 to halve weight memory (~2.6 GB → ~1.3 GB)
+        raw_model = raw_model.to(torch.float16)
+        self.model = SGMWrapper(raw_model).to(device)
 
         self.ae = AutoEncoder(chunk_size=1).to(device)
         self.conditioner = CLIPConditioner().to(device)
@@ -94,7 +95,7 @@ class SevaSynthesizer(BaseSynthesizer):
             self.conditioner = torch.compile(self.conditioner, dynamic=False)
             self.ae = torch.compile(self.ae, dynamic=False)
 
-        logger.info("SEVA model loaded.")
+        logger.info("SEVA model loaded (backbone fp16).")
 
     # ------------------------------------------------------------------
     def generate_views(
@@ -114,13 +115,15 @@ class SevaSynthesizer(BaseSynthesizer):
 
         _ensure_vendor_on_path()
 
-        from seva.eval import infer_prior_stats, run_one_scene
+        from seva.eval import infer_prior_stats, run_one_scene, set_lowvram_mode
         from seva.geometry import get_preset_pose_fov, get_default_intrinsics
 
         views_dir = Path(output_dir) / "views"
         views_dir.mkdir(parents=True, exist_ok=True)
 
-        num_targets = max(num_views - 1, SEVA_DEFAULT_FRAMES - 1)
+        # Respect num_views instead of forcing 21 frames; this keeps VRAM
+        # within 12 GB on a 4070 Ti by reducing T and the anchor-frame count.
+        num_targets = num_views - 1
         T = num_targets + 1
 
         version_dict = {
@@ -137,7 +140,7 @@ class SevaSynthesizer(BaseSynthesizer):
                 "guider_types": 1,
                 "cfg": 4.0,
                 "camera_scale": 2.0,
-                "num_steps": 50,
+                "num_steps": 25,
                 "cfg_min": 1.2,
                 "encoding_t": 1,
                 "decoding_t": 1,
@@ -193,8 +196,10 @@ class SevaSynthesizer(BaseSynthesizer):
 
         logger.info(
             f"Running SEVA inference (img2trajvid_s-prob, orbit, "
-            f"{num_targets + 1} frames) …"
+            f"{num_targets + 1} frames, num_steps=25) …"
         )
+        set_lowvram_mode(True)
+        torch.cuda.empty_cache()
         video_path_generator = run_one_scene(
             "img2trajvid_s-prob",
             version_dict,

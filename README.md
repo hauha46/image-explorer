@@ -1,17 +1,60 @@
+GitHub link: https://github.com/hauha46/image-explorer
+
 # For Graders:
 
+For inference, we use SVC, found here: https://huggingface.co/stabilityai/stable-virtual-camera.
 
-First, run this command to install the necessary and relevant models to your system.
-This will download 9 models that were used in making our pipeline. During execution of 
-our pipeline, only 3 are used, however the other models were used in testing.
+This is a gated model, meaning you will need to have an active huggingface token in order to access it. While other models don't require this, 
+we chose to use SVC as it gives the best results.
 
-<command
+# Requirements
 
-Second, run uv sync in order to get up to date packages:
+To run the demo_pipeline.py file, which is one inference run, you will need at least 12 GB of VRAM. This will produce results but they will not be as nice
+as what we have in our report and presentation because we used an A100 for those.
 
-< uv sync
 
-Third, run chmod on the run.sh in order to be able to access the frontend.
+# Setup (Also for Graders)
+First, run this command to install the necessary vendor repositories, model checkpoints, and Python dependencies:
+
+```bash
+bash setup.sh
+```
+
+This will download 9 models that were used in making our pipeline. During execution of our pipeline, only 3 are used; however, the other models were used in testing.
+
+Second, ensure your Python packages are synced:
+
+```bash
+uv sync
+```
+
+Third, run the demo pipeline to see the end-to-end inference results (image → SEVA novel views → DUSt3R reconstruction → BPA meshing):
+
+```bash
+uv run python demo_pipeline.py
+```
+
+The default input image is `benchmark_image_1.jpg`. To use the default image:
+```bash
+uv run python demo_pipeline.py
+```
+
+To use a different image:
+
+```bash
+uv run python demo_pipeline.py --image path/to/your_image.jpg
+```
+
+Output will be saved to `final_demo_outputs/` at the repo root:
+- `final_demo_outputs/views/_seva_work/samples-rgb/` — generated novel views
+- `final_demo_outputs/reconstruction/scene.glb` — DUSt3R point cloud
+- `final_demo_outputs/reconstruction/scene_mesh.glb` — BPA mesh
+
+If you want to see the frontend (note: the frontend is not connected to the pipeline due to breaking code changes):
+
+```bash
+bash run.sh
+```
 
 
 
