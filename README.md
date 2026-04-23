@@ -7,6 +7,8 @@ For inference, we use SVC, found here: https://huggingface.co/stabilityai/stable
 This is a gated model, meaning you will need to have an active huggingface token in order to access it. While other models don't require this, 
 we chose to use SVC as it gives the best results.
 
+The pipeline will setup without a huggingface token, but it will not be able to download or run SEVA, which will cause the pipeline to fail.
+
 # Requirements
 
 To run the demo_pipeline.py file, which is one inference run, you will need at least 12 GB of VRAM. This will produce results but they will not be as nice
@@ -57,78 +59,96 @@ bash run.sh
 ```
 
 
+## Top-Level File Tree
 
-
-
-# Image Explorer
-
-This project uses `uv` for dependency management and integrates the Dust3r model for 3D reconstruction from images.
-
-## Installation Guide
-
-Follow these steps to set up the project environment and download the necessary submodules:
-
-### 1. Initialize Python Environment
-
-We use `uv` to manage the Python environment and dependencies from the root directory.
-
-```bash
-# Initialize uv (if not already done)
-uv init
-
-# Install dependencies and sync the environment
-uv sync
-
-# Make the run script executable
-chmod +x run.sh
+```
+image-explorer/
+│
+├── README.md                          # Setup & grader instructions
+├── setup.sh                           # One-shot setup (vendors, weights, deps)
+├── demo_pipeline.py                   # ⭐ MAIN INFERENCE SCRIPT
+│                                      #    Single image → SEVA views → DUSt3R → mesh
+│
+├── backend/                           # All backend / ML code
+│   ├── app.py                         # FastAPI server (loads models, exposes endpoints)
+│   ├── scene_processor.py             # Core pipeline orchestrator
+│   │                                    # (depth → NVS → reconstruction → JSON export)
+│   ├── depth_pro_estimator.py         # DepthPro depth / FOV estimation
+│   ├── requirements.txt               # Python dependencies
+│   │
+│   ├── configs/                       # YAML / JSON presets for camera orbits
+│   │   ├── default.yaml
+│   │   ├── indoor_orbit.yaml
+│   │   └── seva_orbit_preset_for_dust3r.json
+│   │
+│   ├── novel_view_synthesis/          # ⭐ NVS MODELS
+│   │   ├── base.py                    # Abstract base class for all synthesizers
+│   │   ├── seva_synthesizer.py        # SEVA (Stable Virtual Camera) — primary model
+│   │   ├── seva_synthesizer_4070ti.py # SEVA variant tuned for 12 GB VRAM
+│   │   ├── sv3d_synthesizer.py        # SV3D (Stable Video 3D)
+│   │   ├── svd_synthesizer.py         # SVD (Stable Video Diffusion)
+│   │   ├── vivid_synthesizer.py       # VIVID
+│   │   ├── panodreamer_synthesizer.py # PanoDreamer
+│   │   ├── viewcrafter_synthesizer.py # ViewCrafter
+│   │   └── zero123pp_synthesizer.py   # Zero123++
+│   │
+│   ├── reconstruction/                # ⭐ 3D RECONSTRUCTION
+│   │   ├── dust3r_reconstructor.py    # DUSt3R point-cloud reconstruction
+│   │   ├── vggt_reconstructor.py      # VGGT reconstruction
+│   │   ├── vggt_depthpro_reconstructor.py
+│   │   ├── mesh_generator.py          # Ball-Pivoting Algorithm (BPA) meshing
+│   │   └── run_reconstruction.py      # CLI entry point for reconstruction
+│   │
+│   ├── experiments/                   # Research / ablation code
+│   │   ├── clip_recond_sweep.py       # CLIP text re-conditioning sweep
+│   │   ├── metrics.py                 # PSNR, SSIM, LPIPS, CLIP score helpers
+│   │   ├── prompts.py                 # Prompt bank for experiments
+│   │   ├── make_report_artifacts.py   # Generate contact sheets / grids
+│   │   └── clip_recond/               # Saved sweep runs + per-run READMEs
+│   │       ├── summary/all_runs.csv
+│   │       └── 2026.../               # Individual run folders
+│   │
+│   └── vendor/                        # Third-party repositories (git submodules / clones)
+│       ├── dust3r/                    # DUSt3R official repo
+│       ├── stable-virtual-camera/     # SEVA official repo
+│       ├── DepthPro/                  # DepthPro depth estimator
+│       ├── vggt/                      # VGGT
+│       ├── PanoDreamer/
+│       ├── ViewCrafter/
+│       ├── sv3d-diffusers/
+│       └── ml-depth-pro, ml-vivid     # Additional depth / vivid vendors
+│
+├── frontend/                          # Minimal web UI (NOT connected to pipeline)
+│   ├── index.html
+│   └── src/
+│       ├── main.js
+│       └── style.css
+│
+├── final_demo_outputs/                # Generated by demo_pipeline.py
+│   ├── views/
+│   │   └── _seva_work/samples-rgb/    # Novel view frames
+│   └── reconstruction/
+│       ├── scene.glb                  # Point cloud
+│       └── scene_mesh.glb             # BPA mesh
+│
+└── benchmark_image_1.jpg              # Default input for demo_pipeline.py
 ```
 
-### 2. Set Up Vendor Directory and Dust3r
+---
 
-The `dust3r` repository needs to be cloned into the `backend/vendor` directory, and its submodules (like `croco`) must be initialized.
+## Where to Look for What
 
-```bash
-# Create the vendor directory
-mkdir -p backend/vendor
+| What you want to grade | Where to find it |
+|---|---|
+| **End-to-end inference script** | `demo_pipeline.py` |
+| **Core pipeline logic** (depth → NVS → reconstruction) | `backend/scene_processor.py` |
+| **Novel View Synthesis (SEVA)** | `backend/novel_view_synthesis/seva_synthesizer_4070ti.py` |
+| **3D Reconstruction (DUSt3R)** | `backend/reconstruction/dust3r_reconstructor.py` |
+| **Mesh generation (BPA)** | `backend/reconstruction/mesh_generator.py` |
+| **Depth / FOV estimation** | `backend/depth_pro_estimator.py` |
+| **CLIP re-conditioning experiments** | `backend/experiments/clip_recond_sweep.py` |
+| **Experiment metrics & prompts** | `backend/experiments/metrics.py`, `backend/experiments/prompts.py` |
+| **API / server entry point** | `backend/app.py` |
+| **Vendor repos (external code)** | `backend/vendor/*` |
 
-# Clone the dust3r repository into the vendor directory
-git clone https://github.com/naver/dust3r.git backend/vendor/dust3r
-
-# Initialize the croco submodule required by dust3r
-cd backend/vendor/dust3r
-git submodule update --init --recursive
-cd ../../../
-```
-
-### 3. Setup Depth Pro
-
-The `ml-depth-pro` repository needs to be cloned into the `backend/vendor` directory and added as a dependency using `uv`.
-
-```bash
-# Clone the ml-depth-pro repository into the vendor directory
-git clone https://github.com/apple/ml-depth-pro.git backend/vendor/ml-depth-pro
-
-# Add ml-depth-pro as a local dependency
-uv add ./backend/vendor/ml-depth-pro
-```
-
-### 4. Setup Input and Output Directories
-
-Create the directories where your input images will be placed and where the resulting 3D models will be saved.
-
-```bash
-mkdir -p backend/images
-mkdir -p backend/uploads/test_scene
-```
-
-## Usage
-
-To run the Dust3r reconstructor, place at least two overlapping images of a scene/object in the `backend/images` folder.
-
-Then, execute the reconstruction script from the main project directory:
-
-```bash
-uv run python backend/dust3r_reconstructor.py --images_dir backend/images --output_dir backend/uploads/test_scene
-```
-
-Once complete, the reconstructed 3D point cloud will be saved as `scene.glb` in your `backend/uploads/test_scene` folder.
+---
