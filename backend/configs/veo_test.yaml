@@ -1,0 +1,26 @@
+# Preset for VEO-generated test images (e.g. backend/duster_images/veo_test_images).
+# Tuned for general multi-view captures where DUSt3R solves camera poses
+# naturally (no forced orbit). Alpha shapes give a good balance of detail
+# and hole-filling for unknown scene types.
+
+images_dir: "backend/duster_images/veo_test_images"
+output_dir: null
+
+reconstructor:
+  method: "dust3r"
+  device: null
+
+  dust3r:
+    as_pointcloud: true
+    flip_yz_for_gltf: true
+
+meshing:
+  enabled: true
+  algo: "alpha"
+
+  outlier_nb: 30
+  outlier_std: 1.2
+  normal_knn: 30
+
+  alpha:
+    mult: 2.0

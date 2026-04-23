@@ -1,0 +1,788 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2020
+
+% ready for submission
+% \usepackage{neurips_2020}
+
+% to compile a preprint version, e.g., for submission to arXiv, add add the
+% [preprint] option:
+%     \usepackage[preprint]{neurips_2020}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+%     \usepackage[final]{neurips_2020}
+
+% to avoid loading the natbib package, add option nonatbib:
+     \usepackage[final, nonatbib]{neurips_2020}
+     \usepackage{lineno}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+
+\title{Generating 3D Environments from a Sample 2D Image}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+\author{
+  Daniel Tkachov \\
+  Northeastern University \\
+  Boston, MA \\
+  \texttt{tkachov.d@northeastern.edu} \\
+  \And
+  Eason Liu \\
+  Northeastern University \\
+  Boston, MA \\
+  \texttt{liu.ea@northeastern.edu} \\
+  \And
+  Hau Ha \\
+  Northeastern University \\
+  Boston, MA \\
+  \texttt{ha.hau@northeastern.edu} \\
+}
+
+\begin{document}
+\linenumbers
+
+
+\maketitle
+
+% Dont need this according to assignment
+
+% \begin{abstract}
+%   The abstract paragraph should be indented \nicefrac{1}{2}~inch (3~picas) on
+%   both the left- and right-hand margins. Use 10~point type, with a vertical
+%   spacing (leading) of 11~points.  The word \textbf{Abstract} must be centered,
+%   bold, and in point size 12. Two line spaces precede the abstract. The abstract
+%   must be limited to one paragraph.
+% \end{abstract}
+
+
+
+\section{Introduction: Problem definition and Motivation}
+The goal of this project is to generate a navigable 3D environment from a single 2D image. Given only one photograph of an indoor scene, we want to recover enough structural and visual information so that the scene can later be viewed from new camera angles and explored as a 3D space. This means taking a single image of a room, synthesizing plausible new viewpoints that were not originally visible, and then using those views to construct a 3D representation of the scene. The final objective is not just to generate a few appealing images, but to build a scene that remains believable and coherent. %as the viewpoint changes. <-- dont need this
+
+This is a challenging problem because a single image has limited information regarding the scene information from a 3D perspective. Large parts of the scene may have many different problems such as parts of the scene being hidden by occlusions, cropped out of frame, or have parts of the scene where it was never even captured by the original image. As a thought experiment, imagine a living room where it shows sofa, coffee table, and chairs clearly, but has very limited information on the side walls, the corners of the rooms that are hidden from view, or what lies behind some of the foreground objects. When the camera is shifted to an alternate pose that is not the original input, the pipeline now faces the challenge of having to infer the content about the scene that was never inputted. On top of the inference, the model must also generate these views in a plausible manner while also preserving the geometry and layout of the original input scene.
+
+For this reason, single 2D image to 3D scene generation is a challenge that intersects between being a reconstruction problem and a generation problem at the same time. The pipeline must be able to estimate geometric structure in hidden parts of the scene that it does not have information on, or else the scene will not be plausible when the camera alternates position. The pipeline must also be able to do generation well or else the novel views could look inconsistent or disconnected from the original room. The main challenge is making sure that the the generated views will look not only plausible but also spatially consistent.
+
+Our pipeline takes on this problem in several different stages. First, we estimate depth from the single input image using Depth Pro, which provides a metric depth math together with an estimate field of view. This stage gives the pipeline an initial understanding of the scnee structure from only one view. Second, we perform novel view synthesis which is the most important generative stage of the project. In this implementation, the two main models used for this stage is Stable Virtual Camera and ViewCrafter. These models are able to take the original image and a target camera trajectory and generate new views of the room from previously unseen  perspectives. For the third phase, the generated views are passed into DUSt3R which reconstructs a rough 3D representation of the scene. Finally, this representation is used for meshing and scene composition so that the output can be treated as a navigable 3D environment.
+
+A major motivation for this project is that generating 3D scenes from sparse input is useful in many practical settings. Just to list some generic applications like virtual walkthrough, environment prototyping, or interactive scene generation, when there may be limited information available. This makes it so that it's not necessary to collect large amounts of data of multi view images for reconstruction or construct geometry manually.
+
+Another motivation for this project is that it gives a strong setting for studying controllability in generative vision systems. It is pointless for just a model to create a plausible novel view if the user has no way to influence important aspects of the results. In many use cases, an individual may want to not only specify the camera motion but also specify the appearance of the generated scene in a prompt. This leads to an important experiment of this paper: can a model remain geometrically consistent while also responding to semantic text prompts? In this system, this question is explored in detail as the two main novel view synthesis models that are studied do not respond to text conditioning in the same manner.
+
+Because of this, one of the main focuses of the project is the comparison between Stable Virtual Camera and Viewcrafter. The comparison is meaningful as both two models have different approaches on the same novel view synthesis problem. Before considering prompt control, we first compare both models in the no prompt setting to study their strength and weaknesses for general 3D generation from a single image. This baseline comparison helps us evaluate how well each model preserves scene structure, synthesizes plausible unseen content, and supports downstream 3D reconstruction under the same overall pipeline. ViewCrafter already supports text guided generation more naturally, while SVC in your original setup was mainly image conditioned and did not make strong use of text prompts. This creates an interesting comparison between a model that is already more prompt aware and a model that is more flexible in camera based generation but not directly text conditioned. To explore this difference further, we introduce a prompt steering method on top of SVC. Instead of retraining the model, we use CLIP based target prompt and a neutral prompt, compute their differences in CLIP space, and inject that semantic direction into SVC's conditioning at inference time. The purpose of this modification is to make SVC more responsive to prompts while still keeping it anchored to the original scene image, and to test whether this training free method can move SVC closer to the behavior of a text pre-conditioned model like ViewCrafter.
+
+This training free setup is motivated by both practicality and curiosity of output. From a practical standpoint, retraining a large diffusion model would require more time, data, and compute resources than are realistically available. A training free method is much easier to test, iterate on, and integrate into an existing pipeline. It is also interesting to ask how much controllability can be gained from a model that was not originally designed around native text conditioning. If prompt steering can be added successfully at inference time, then it suggests that the geometry preserving strengths of SVC can be combined with at least part of the semantic flexibility usually associated with prompt conditioned models.
+
+The main contributions of this project can be summarized in three parts. First, we build an end-to-end single-image pipeline that estimates depth, generates novel views, reconstructs 3D geometry, and produces a composed scene representation. Second, we compare two different novel view synthesis approaches, Stable Virtual Camera and ViewCrafter, inside that same overall framework. Third, we implement a training-free CLIP-based prompt steering method for SVC and study whether this added controllability can move it closer to the behavior of a model like ViewCrafter, which already has native text conditioning. Altogether, the project asks not only whether a coherent 3D environment can be generated from a single image, but also whether that process can be made more controllable.
+
+
+\section{Related Work: Literature survey}
+1) Stable Virtual Camera: Generative View Synthesis with Diffusion Models: https://arxiv.org/abs/2503.14489
+Stable Virtual Camera addresses the problem of novel view synthesis using a generalist diffusion model that is able to take in a variable number of input views together with various camera poses and outputs new images of the scene from new viewpoints. This approach is suppose to attack where previous methods came short, it is setup to handle both large jumps in viewpoints and temporal smoothness.To do this, it uses a flexible sampling methology to adapt to different view synthesis settings at test time without retraining. For our project, this is one of our main baseline models, and how we compare against viewcrafter when generating new viewpoints from a single image while trying to keep the scene consistent across different view points.
+
+
+2) ViewCrafter: Taming Video Diffusion Models for High-fidelity Novel View Synthesis:https://arxiv.org/abs/2409.02048
+Viewcrafter by Wangbo Yu et al. generates "high" quality images of a scene from camera angles that weren't in the original input from just one or multiple images. This methodology combines the generative ability of video diffusion models with 3D clues from a point based representation and allows it to produce sharper frames and still maintains the ability for the user to have a say in the movement of the virtual camera. To allow for a wider range of viewpoints than a single pass can handle, Viewcrafter applies a camera trajectory planning approach with iteration to generate more of the scene and generate one view by one view.
+
+3) Depth Pro https://arxiv.org/abs/2410.02073
+Depth Pro by Aleksei Bochkovskii et al. estimates depth from a single image using just one camera view, as opposed to other methods that we explored that use two images to triangulate distance. Depth Pro is unique in that it predicts metric depth, which is the actual distance in meters as opposed to other survey methods that only look at the relative depth of different objects. It attempts to achieve this without removing too much fine details or sharp edges. The model uses a transformer based model that looks at the image in different scales. This is an important related work for our project as we begin from a single input image, thus a reliable depth map helps a lot at generating the scene's 3D structure before we move to the next steps of novel view synthesis and 3D reconstruction.
+
+4) DUSt3R: Geometric 3D Vision Made Easy: https://arxiv.org/abs/2312.14132
+DUSt3R by Shuzhe Wang et al. takes a versatile approach to the problem of 3D reconstruction and avoids relying on camera parameteres. In other surveyed 3D reconstruction pipelines, the models need to know the intrinsic values such as camera pose and rotation, before triangulating 3D points from 2D images. DUSt3R avoids dealing with this problem by predicting pointmaps from given pairs of images which are just 2D grids where each pixel has information on its own 3D location. Using information by images, it will align pointmaps into a shared coordinate frame. DUSt3r is therefore an appropriate choice into our pipeline as it takes the novel views we generate and recover a rough 3D structure of the scene with necessary  camera information. In our pipeline, DUSt3r takes the novel views and then recovers a 3D structure and feeds it into scene composition and meshing.
+
+5) Pano Dream by Avinash Paliwal et al.
+% approaches the problem uniquely and grows the scene through interaction, where the world is grown step by step as you move the camera. Instead of extending the scene chunk by chunk,
+works to generate a full $360^\circ$ panorama from the single input image. The approach applies diffusion inpainting across overlapping regions in an iterative manner (with optimization) to create a better panoramic blend. Afterwards, it creates a panoramic depth map mirroring the full view, projects the panorama into 3D space, and refines it with Gaussian splatting for new viewpoints to be rendered. The high-level idea is to create a 2D world, which is used to create a 3D world. For clarification, this was just a case study we looked at for methodology and took inspiration from; it was not used in our pipeline in any way.
+
+6) Learning Transferable Visual Models From Natural Language Supervision
+https://arxiv.org/abs/2103.00020.
+Learning Transferable Visual Models by Alec Radofrd et al. introduces CLIP, a moel that learns a shared representation between images and text by training on a large dataset of image captions. Instead of being trained to recognize a fixed list of categories, CLIP learns to connect visual concepts with natural lagnuage description. This allows for zero shot transfer which is the ability for the model to take on new tasks that it was never trained on. The core idea is that text embeddings and image embeddings exist on the same feature space. This paper is of high importance for the pipeline in this project as it's what makes CLIP based prompt steering possible which is the technique of nudging outputs in a specific direction by manipulating text and image features together.
+
+7) StyleGAN-NADA: CLIP-Guided Domain Adaptation of Image Generators: https://arxiv.org/abs/2108.00946
+
+StyleGAN-NADA dives into how generators can be changed to a new visual domain with only CLIP guidance and text prompt without additional example image from the visual domain in question. The method abuses CLIP's semantic knowledge to direct the generator in the direction that is described by the text and just gradually shift the output towards new concepts while still preserving what was correct and applicable from the original latent space. This paper showed that it's possible for text alone to steer a generator toward a desired visual change, and is relevant to this project as it's the inspiration for the training free prompt steering idea implemented in this final project's pipeline.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Pipeline overview}
+\label{sec:method-overview}
+
+Given a single RGB photograph $I \in \mathbb{R}^{H \times W \times 3}$, our
+system produces a vertex-colored 3D point cloud
+$\mathcal{S} \in \mathbb{R}^{N \times 6}$ (XYZ + RGB) that can be rendered
+from arbitrary viewpoints, and, optionally, a triangular surface mesh
+$\mathcal{M} = (\mathbf{V}, \mathbf{F}, \mathbf{C})$. The pipeline
+decomposes the problem into four disentangled stages
+(Fig.~\ref{fig:pipeline}):
+
+\begin{enumerate}
+  \item \textbf{Metric depth estimation.} A monocular estimator (Apple
+  DepthPro~\cite{depthpro}) predicts a per-pixel depth map
+  $D \in \mathbb{R}^{H \times W}$ and a horizontal field of view $\phi$.
+  The FOV is forwarded to the novel-view synthesizer so that its
+  synthesized camera intrinsics match those of the real photograph.
+
+  \item \textbf{Novel view synthesis (NVS).} One of two backends --
+  ViewCrafter~\cite{viewcrafter} or Stable Virtual Camera, hereafter
+  SEVA~\cite{seva} -- hallucinates $K$ additional views of the same scene
+  along a camera trajectory. We treat NVS as a black-box transform
+  $\mathcal{N}\colon (I, D, \phi, \tau) \mapsto \{V_1, \ldots, V_K\}$,
+  where $\tau$ is a trajectory (e.g., orbit, dolly).
+
+  \item \textbf{Stereo 3D reconstruction.} The synthesized views plus the
+  original image -- serving as a ground-truth anchor -- are fed into
+  DUSt3R~\cite{dust3r} configured in complete-pair-graph mode, and a
+  global alignment step solves for a single consistent metric coordinate
+  frame.
+
+  \item \textbf{Surface and viewer.} The resulting point cloud is served
+  in two interchangeable formats: a directly-rendered point-cloud GLB,
+  and an optional triangle mesh computed by Ball Pivoting surface
+  reconstruction~\cite{bpa} with nearest-neighbor color transfer. Both
+  are rendered in-browser with Three.js through three camera modes
+  (orbit, free 3D, FPS walk).
+\end{enumerate}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/pipeline.pdf}
+  \caption{Our four-stage pipeline. Stages outside the dashed box are
+  prior work; the dashed box marks our training-free prompt-steering
+  contribution to SEVA.}
+  \label{fig:pipeline}
+\end{figure}
+
+\subsection{Why decompose NVS from reconstruction?}
+\label{sec:method-intuition}
+
+End-to-end single-image 3D models map pixels directly to 3D primitives
+but require large-scale 3D supervision and typically do not expose text
+conditioning. By contrast, single-image NVS models inherit strong
+generative priors from video pretraining and accept natural text control,
+while DUSt3R already solves stereo reconstruction from arbitrary image
+pairs without ground-truth poses. Chaining them yields three properties
+we exploit. \textbf{(i)} \emph{Prompt-conditioned hallucination} of
+unobserved regions, because content generation is deferred to the NVS
+stage. \textbf{(ii)} An \emph{anchor-view trick}: keeping the original
+photograph in the DUSt3R input set prevents the global alignment from
+drifting around hallucinated frames. \textbf{(iii)} A clean
+\emph{separation of concerns} between semantic content (controlled by
+the NVS stage) and geometry (pinned by DUSt3R), which makes the effect
+of our prompt-steering delta attributable rather than entangled with
+downstream reconstruction error.
+
+\subsection{Novel view synthesis}
+\label{sec:method-nvs}
+
+We evaluate two complementary NVS backends: ViewCrafter, which has
+native text conditioning, and SEVA, which does not. This asymmetry is
+the point -- it lets us measure the value added by our training-free
+prompt-steering method on a model that originally ignored text.
+
+\subsubsection{ViewCrafter: point-cloud-guided diffusion with native text}
+\label{sec:method-viewcrafter}
+
+ViewCrafter~\cite{viewcrafter} is a point-cloud-conditioned video
+diffusion model. At inference, the input image is first unprojected to
+a sparse point cloud using an internal DUSt3R call. For each target
+pose, the point cloud is re-rendered through the target camera,
+producing a partial depth-warped image with visible disocclusion holes.
+A text-to-video diffusion UNet then refines this partial render,
+in-painting the disocclusions while respecting the reference geometry.
+The camera trajectory is parameterized by segment-wise offsets
+$(d_\theta, d_\phi, d_r, d_x, d_y)$, and a natural-language prompt $p$
+is injected into the UNet cross-attention through its built-in text
+encoder. ViewCrafter therefore supports text conditioning natively; we
+use it as a \textbf{prompt-aware baseline} and do not modify it.
+
+\subsubsection{SEVA without prompts (baseline)}
+\label{sec:method-seva-baseline}
+
+SEVA is a 1.3B-parameter multi-view diffusion model that does
+\emph{not} assume a point-cloud prior. Its UNet receives two streams of
+conditioning per target frame: (i) a Pl\"ucker ray map derived from
+per-frame camera extrinsics $c2w_k \in \mathrm{SE}(3)$ and intrinsics
+$K_k \in \mathbb{R}^{3 \times 3}$, and (ii) a pooled CLIP image embedding
+$c_{\mathrm{img}} = E_V(I) \in \mathbb{R}^{1024}$ produced by an
+OpenCLIP ViT-H/14 encoder pretrained on LAION-2B. Although SEVA's
+implementation loads the full OpenCLIP dual encoder, only the image
+branch is used at inference; the text branch $E_T$ is present but
+dormant. SEVA therefore ignores any user-supplied prompt by default --
+this is the \textbf{prompt-free SEVA baseline} that a user currently
+gets out of the box.
+
+\subsubsection{SEVA with training-free CLIP-direction re-conditioning (ours)}
+\label{sec:method-seva-clip}
+
+Our contribution is to awaken SEVA's text branch \emph{without
+retraining the UNet}, by exploiting the fact that CLIP's image and text
+encoders project into the same 1024-dimensional joint space under
+contrastive pretraining~\cite{clip}. Na\"ively replacing the image
+embedding with a text embedding destabilizes downstream UNets, because
+the two distributions -- although aligned in direction -- differ in norm
+and fine-grained structure. We instead apply a \emph{directional edit}
+in the style of StyleGAN-NADA~\cite{stylegan_nada}.
+
+Given a target prompt $p_t$ and a neutral reference prompt $p_n$ (e.g.,
+\textit{``a photo of a living room interior''}), we compute their text
+embeddings and take their unit-direction difference in CLIP space,
+\begin{equation}
+\hat{\Delta}
+\;=\;
+\frac{E_T(p_t) - E_T(p_n)}{\lVert E_T(p_t) - E_T(p_n) \rVert}.
+\label{eq:clip-direction}
+\end{equation}
+The image embedding is then perturbed along $\hat{\Delta}$ with
+magnitude proportional to its own norm,
+\begin{equation}
+\tilde{c}
+\;=\;
+c_{\mathrm{img}}
+\;+\;
+\lambda \cdot \lVert c_{\mathrm{img}} \rVert \cdot \hat{\Delta},
+\qquad
+\lambda \in [0, 0.3].
+\label{eq:clip-reconditioning}
+\end{equation}
+
+Two design properties follow. First, the perturbation magnitude is
+matched to the image embedding's norm, so $\tilde{c}$ remains on the
+distribution SEVA's UNet was trained to consume; only its direction is
+rotated. Second, the neutral anchor $p_n$ cancels the generic ``it's a
+photograph'' component common to every CLIP text embedding, leaving
+only the semantic delta of interest (sunset vs.~daytime, rain
+vs.~clear). The coefficient $\lambda$ acts as a single continuous knob
+that interpolates between the prompt-free SEVA baseline ($\lambda = 0$)
+and increasingly prompt-obedient generation.
+
+Implementation-wise, this is a $\sim$10-line modification to SEVA's
+\texttt{CLIPConditioner.forward}: the direction is encoded once per
+request and injected inside the forward pass, with a
+\texttt{try/finally} teardown so stateful perturbation is cleared
+after each session. No UNet weights change, and no fine-tuning dataset
+is required. The resulting pipeline exposes three new user-facing
+parameters -- \texttt{prompt}, \texttt{neutral\_prompt}, and $\lambda$
+-- which are silently ignored by ViewCrafter (which uses its own prompt
+path) via introspection of the synthesizer's \texttt{generate\_views}
+signature.
+
+\subsection{Multi-view 3D reconstruction with DUSt3R}
+\label{sec:method-dust3r}
+
+Let $\mathcal{V} = \{V_0, V_1, \ldots, V_K\}$ be the input set, where
+$V_0 = I$ is the original photograph (our anchor) and $V_{1\ldots K}$
+are the $K$ synthesized views. Each view is resized to the 512-pixel
+input resolution of the DUSt3R ViT-Large / DPT-decoder checkpoint
+(\texttt{naver/DUSt3R\_ViTLarge\_BaseDecoder\_512\_dpt}). We form a
+\emph{complete directed pair graph} -- all $K(K+1)$ ordered pairs
+$(V_i, V_j)$, $i \neq j$ -- and symmetrize it. DUSt3R predicts, for
+each ordered pair, a pair of dense pointmaps
+$X_{i \to j}, X_{j \to j} \in \mathbb{R}^{H \times W \times 3}$
+expressed in the coordinate frame of the second camera, together with
+per-pixel confidence.
+
+Per-pair pointmaps are not mutually consistent. We resolve them with
+DUSt3R's \texttt{PointCloudOptimizer}: a gradient-based global
+alignment that jointly optimizes per-image camera poses
+$\{(R_i, t_i)\}$ and a shared 3D point set to minimize the weighted
+reprojection residual across all pairs. The pose graph is initialized
+with a minimum spanning tree over pair confidences and optimized for
+300 iterations using Adam with learning rate $10^{-2}$ under a linear
+schedule. After alignment, points with confidence below
+$\tau_{\mathrm{conf}} = 3.0$ are discarded, yielding a single
+vertex-colored point cloud $\mathcal{S}$ exported as GLB.
+
+The anchor-view trick is load-bearing. Without $V_0$ in the graph, the
+optimizer has no reference to the ``true'' image and may converge to a
+geometry that is internally consistent across hallucinated frames but
+bears no resemblance to the input. Because every other view is paired
+against $V_0$ through the complete graph, residuals against the anchor
+dominate in the early iterations and bias the shared coordinate frame
+toward the photograph's implicit metric.
+
+\subsection{Point cloud to mesh: Ball Pivoting with vertex-color transfer}
+\label{sec:method-mesh}
+
+A dense point cloud supports free navigation but lacks the water-tight
+surfaces required for collision detection, relighting, or texture
+baking. For these, we optionally convert $\mathcal{S}$ into a
+vertex-colored triangle mesh $\mathcal{M} = (\mathbf{V}, \mathbf{F},
+\mathbf{C})$ via the following pipeline, implemented in
+Open3D~\cite{open3d} and trimesh:
+
+\begin{enumerate}
+  \item \textbf{Statistical outlier removal.} Points whose mean
+  distance to their $k = 40$ nearest neighbors exceeds $1.5$ standard
+  deviations above the global mean are discarded. This cleans DUSt3R's
+  low-confidence tail without erasing fine structure.
+
+  \item \textbf{Normal estimation and orientation.} Per-point normals
+  are estimated with a hybrid KD-tree search ($r = 0.1$, max $k = 30$).
+  A spanning-tree orientation pass with $k_{\mathrm{orient}} = 100$
+  enforces a globally consistent tangent-plane orientation -- critical
+  because Ball Pivoting assumes oriented normals.
+
+  \item \textbf{Ball Pivoting surface reconstruction.} We apply the
+  Ball Pivoting Algorithm~\cite{bpa} with a \emph{multi-radius}
+  schedule $\rho_i \in \{1.5, 3.0, 6.0\} \cdot \bar{d}$, where
+  $\bar{d}$ is the mean nearest-neighbor distance over the cleaned
+  cloud. Small radii capture fine geometry; larger radii progressively
+  close the holes that smaller balls cannot pivot across. Unlike
+  Poisson surface reconstruction, BPA is \emph{non-interpolating} --
+  each mesh vertex coincides with a point-cloud vertex -- which lets us
+  transfer colors exactly in the next step.
+
+  \item \textbf{Vertex-color transfer.} DUSt3R's per-point RGB colors
+  $\mathbf{C}_\mathcal{S}$ must be mapped onto mesh vertices
+  $\mathbf{C}_\mathbf{V}$. We build a SciPy \texttt{cKDTree} over the
+  (cleaned) point cloud; for each mesh vertex $v_i$ we query its
+  nearest neighbor $\mathrm{nn}(v_i)$ in the tree and assign
+  $\mathbf{C}_\mathbf{V}[i] = \mathbf{C}_\mathcal{S}[\mathrm{nn}(v_i)]$.
+  Because BPA preserves vertex identity,
+  $\lVert v_i - p_{\mathrm{nn}(v_i)} \rVert \approx 0$ for most
+  vertices, so the transfer is effectively exact -- no color diffusion,
+  no Gaussian splatting of hues across triangles.
+
+  \item \textbf{Mesh smoothing and export.} A single pass of Laplacian
+  smoothing filters one-ring high-frequency noise introduced at
+  ball-pivot boundaries. The final mesh is exported as a
+  vertex-colored GLB via trimesh, interchangeable with the point cloud
+  in the viewer.
+\end{enumerate}
+
+\subsection{Interactive viewer}
+\label{sec:method-viewer}
+
+All rendering is performed in-browser using Three.js. We deliberately
+load the GLB with an \emph{unlit} material,
+\texttt{MeshBasicMaterial(\{vertexColors: true, side: DoubleSide\})}.
+A Phong-like or PBR material would apply lighting calculations on top
+of DUSt3R's already-baked colors, darkening interiors and producing
+appearance inconsistent with the input photograph. Because DUSt3R
+outputs per-vertex albedo sampled from the original views, the correct
+rendering pipeline is direct vertex-color replay.
+
+The loaded model is auto-framed: we compute its bounding sphere
+$(\mathbf{c}, r)$ and position the perspective camera at
+$\mathbf{c} + 1.3\,r / \sin(\phi / 2)$ along the viewing axis. Near and
+far clipping planes are scaled proportionally to $r$, so both
+tabletop-scale objects and room-scale reconstructions render correctly.
+Three navigation modes are exposed: (i) an \emph{orbit carousel} that
+plays back the synthesized view frames directly (no geometry);
+(ii) \texttt{OrbitControls} over the reconstructed 3D model; and
+(iii) first-person walking via \texttt{PointerLockControls}, with
+per-frame velocity damping and WASD\,+\,mouse-look bindings. All three
+operate on the same underlying GLB.
+
+
+
+\section{Experiments}
+For this project, we selected a few images of interior rooms that we found from unsplash. We initially collected 20 images to serve as tests, with various resolutions. We eventually started to use 2 images for testing because they were interior scenes with clean lines, which we believed would make it easier for models to generate point clouds for. The idea to tune the model until the 3D scenes for these 2 images were believable, and then expand outward.
+
+From this initial 2D image, we would then use our novel synthetic view generation to create more images. Alongside using the 5 open source models, we also tested our 3D reconstruction using novel views generated by Google's Veo 3.1 Lite model.
+
+We ran our synthetic novel view generation across 3 GPU's to get a sense of what was possible as compute scaled up. We initially ran NVS on a 4070ti, then using a 5070ti, and finally a ranted A100 GPU. We started with our own hardware (The 4070ti and 5070ti) and pushed the models as hard as we could on these GPUs until we reached a point were we were unable to get better results. Following this, we rented an A100 GPU to run novel view synthesis with SEVA, as the results from our local machines were not very good due to vram limitations.
+
+Our metrics were mostly subjective as there is no way to compare the different models apples-to-apples. While it would be possible to compare the number of floating pixels in the point cloud or number of polygons from the final 3D output, none of these were reliable indicators of realism. The output would change based on the NVS model, the reconstruction model, the point connecting algorithm, or tuning of the hyperparameters for any of the previous three. On any pipeline run, we would ask ourselves "If a 3D artist were to render this room, is this what it would look like?" We did not find results that would accurately render the entire room, however, we did get results of individual objects or sections of the room that we were happy with.
+
+\subsection{NVS Comparisons}
+In our experiments for novel view synthesis, we tested 7 total models (that we refer to as "synthesizers") and evaluated them for how well they generated space that was hidden in the original image.
+
+\begin{enumerate}
+    \item Stable Video 3D (SV3D): This model was able to generate passive movement, however, it was designed to remove backgrounds, which removes most of the room environment, so it was not usable.
+    \item Zero123++: This model only output 6 fixed views at fixed angles, and did not do them very well. We stopped using this model very early on.
+    \item Panodreamer
+    \item Stable Virtual Camera
+    \item Vivid
+    \item Viewcrafter
+    \item Stable Video Diffusion:
+\end{enumerate}
+
+
+TODO: PUT IMAGES FROM SEVA< VIEWCRAFTER< AND ANOTHER ONE, MAYBE PANO
+
+Need to talk about viewcrafters native text conditioning vs seva's image-only baseline
+
+
+\subsection{CLIP Prompt Steering}
+
+\subsection{Point Cloud Production}
+
+Once the novel views had been generated, we moved onto creating point clouds, which serve as
+
+\subsection{Meshing algorithm comparison}
+
+After we created point clouds
+
+\subsection{Research Questions}
+
+Initially, we simply tried to create any 3D world from an image. As the project went on, we started to ask  more formal questions:
+
+\begin{enumerate}
+  \item Can we use text prompts to guide SEVA's generation while maintaining its consistency?
+  \item  Which reconstructors do the best job of reconstructing interior environments?
+  \item Which meshing algorithm is best for indoor point clouds?
+  \item Does Dust3r do better when its given coordinates for the approximate camera position in a scene? Does this result in a better 3D mesh?
+\end{enumerate}
+
+
+
+\section{Conclusion}
+
+
+
+
+\section*{References}
+
+\small
+
+
+
+
+% NeurIPS requires electronic submissions.  The electronic submission site is
+% \begin{center}
+%   \url{https://cmt3.research.microsoft.com/NeurIPS2020/}
+% \end{center}
+
+% Please read the instructions below carefully and follow them faithfully.
+
+% \subsection{Style}
+
+% Papers to be submitted to NeurIPS 2020 must be prepared according to the
+% instructions presented here. Papers may only be up to eight pages long,
+% including figures. Additional pages \emph{containing only a section on the broader impact, acknowledgments and/or cited references} are allowed. Papers that exceed eight pages of content will not be reviewed, or in any other way considered for
+% presentation at the conference.
+
+% The margins in 2020 are the same as those in 2007, which allow for $\sim$$15\%$
+% more words in the paper compared to earlier years.
+
+% Authors are required to use the NeurIPS \LaTeX{} style files obtainable at the
+% NeurIPS website as indicated below. Please make sure you use the current files
+% and not previous versions. Tweaking the style files may be grounds for
+% rejection.
+
+% \subsection{Retrieval of style files}
+
+% The style files for NeurIPS and other conference information are available on
+% the World Wide Web at
+% \begin{center}
+%   \url{http://www.neurips.cc/}
+% \end{center}
+% The file \verb+neurips_2020.pdf+ contains these instructions and illustrates the
+% various formatting requirements your NeurIPS paper must satisfy.
+
+% The only supported style file for NeurIPS 2020 is \verb+neurips_2020.sty+,
+% rewritten for \LaTeXe{}.  \textbf{Previous style files for \LaTeX{} 2.09,
+%   Microsoft Word, and RTF are no longer supported!}
+
+% The \LaTeX{} style file contains three optional arguments: \verb+final+, which
+% creates a camera-ready copy, \verb+preprint+, which creates a preprint for
+% submission to, e.g., arXiv, and \verb+nonatbib+, which will not load the
+% \verb+natbib+ package for you in case of package clash.
+
+% \paragraph{Preprint option}
+% If you wish to post a preprint of your work online, e.g., on arXiv, using the
+% NeurIPS style, please use the \verb+preprint+ option. This will create a
+% nonanonymized version of your work with the text ``Preprint. Work in progress.''
+% in the footer. This version may be distributed as you see fit. Please \textbf{do
+%   not} use the \verb+final+ option, which should \textbf{only} be used for
+% papers accepted to NeurIPS.
+
+% At submission time, please omit the \verb+final+ and \verb+preprint+
+% options. This will anonymize your submission and add line numbers to aid
+% review. Please do \emph{not} refer to these line numbers in your paper as they
+% will be removed during generation of camera-ready copies.
+
+% The file \verb+neurips_2020.tex+ may be used as a ``shell'' for writing your
+% paper. All you have to do is replace the author, title, abstract, and text of
+% the paper with your own.
+
+% The formatting instructions contained in these style files are summarized in
+% Sections \ref{gen_inst}, \ref{headings}, and \ref{others} below.
+
+% \section{General formatting instructions}
+% \label{gen_inst}
+
+% The text must be confined within a rectangle 5.5~inches (33~picas) wide and
+% 9~inches (54~picas) long. The left margin is 1.5~inch (9~picas).  Use 10~point
+% type with a vertical spacing (leading) of 11~points.  Times New Roman is the
+% preferred typeface throughout, and will be selected for you by default.
+% Paragraphs are separated by \nicefrac{1}{2}~line space (5.5 points), with no
+% indentation.
+
+% The paper title should be 17~point, initial caps/lower case, bold, centered
+% between two horizontal rules. The top rule should be 4~points thick and the
+% bottom rule should be 1~point thick. Allow \nicefrac{1}{4}~inch space above and
+% below the title to rules. All pages should start at 1~inch (6~picas) from the
+% top of the page.
+
+% For the final version, authors' names are set in boldface, and each name is
+% centered above the corresponding address. The lead author's name is to be listed
+% first (left-most), and the co-authors' names (if different address) are set to
+% follow. If there is only one co-author, list both author and co-author side by
+% side.
+
+% Please pay special attention to the instructions in Section \ref{others}
+% regarding figures, tables, acknowledgments, and references.
+
+% \label{headings}
+
+% All headings should be lower case (except for first word and proper nouns),
+% flush left, and bold.
+
+% First-level headings should be in 12-point type.
+
+% \subsection{Headings: second level}
+
+% Second-level headings should be in 10-point type.
+
+% \subsubsection{Headings: third level}
+
+% Third-level headings should be in 10-point type.
+
+% \paragraph{Paragraphs}
+
+% There is also a \verb+\paragraph+ command available, which sets the heading in
+% bold, flush left, and inline with the text, with the heading followed by 1\,em
+% of space.
+
+% \section{Citations, figures, tables, references}
+% \label{others}
+
+% These instructions apply to everyone.
+
+% \subsection{Citations within the text}
+
+% The \verb+natbib+ package will be loaded for you by default.  Citations may be
+% author/year or numeric, as long as you maintain internal consistency.  As to the
+% format of the references themselves, any style is acceptable as long as it is
+% used consistently.
+
+% The documentation for \verb+natbib+ may be found at
+% \begin{center}
+%   \url{http://mirrors.ctan.org/macros/latex/contrib/natbib/natnotes.pdf}
+% \end{center}
+% Of note is the command \verb+\citet+, which produces citations appropriate for
+% use in inline text.  For example,
+% \begin{verbatim}
+%    \citet{hasselmo} investigated\dots
+% \end{verbatim}
+% produces
+% \begin{quote}
+%   Hasselmo, et al.\ (1995) investigated\dots
+% \end{quote}
+
+% If you wish to load the \verb+natbib+ package with options, you may add the
+% following before loading the \verb+neurips_2020+ package:
+% \begin{verbatim}
+%    \PassOptionsToPackage{options}{natbib}
+% \end{verbatim}
+
+% If \verb+natbib+ clashes with another package you load, you can add the optional
+% argument \verb+nonatbib+ when loading the style file:
+% \begin{verbatim}
+%    \usepackage[nonatbib]{neurips_2020}
+% \end{verbatim}
+
+% As submission is double blind, refer to your own published work in the third
+% person. That is, use ``In the previous work of Jones et al.\ [4],'' not ``In our
+% previous work [4].'' If you cite your other papers that are not widely available
+% (e.g., a journal paper under review), use anonymous author names in the
+% citation, e.g., an author of the form ``A.\ Anonymous.''
+
+% \subsection{Footnotes}
+
+% Footnotes should be used sparingly.  If you do require a footnote, indicate
+% footnotes with a number\footnote{Sample of the first footnote.} in the
+% text. Place the footnotes at the bottom of the page on which they appear.
+% Precede the footnote with a horizontal rule of 2~inches (12~picas).
+
+% Note that footnotes are properly typeset \emph{after} punctuation
+% marks.\footnote{As in this example.}
+
+% \subsection{Figures}
+
+% \begin{figure}
+%   \centering
+%   \fbox{\rule[-.5cm]{0cm}{4cm} \rule[-.5cm]{4cm}{0cm}}
+%   \caption{Sample figure caption.}
+% \end{figure}
+
+% All artwork must be neat, clean, and legible. Lines should be dark enough for
+% purposes of reproduction. The figure number and caption always appear after the
+% figure. Place one line space before the figure caption and one line space after
+% the figure. The figure caption should be lower case (except for first word and
+% proper nouns); figures are numbered consecutively.
+
+% You may use color figures.  However, it is best for the figure captions and the
+% paper body to be legible if the paper is printed in either black/white or in
+% color.
+
+% \subsection{Tables}
+
+% All tables must be centered, neat, clean and legible.  The table number and
+% title always appear before the table.  See Table~\ref{sample-table}.
+
+% Place one line space before the table title, one line space after the
+% table title, and one line space after the table. The table title must
+% be lower case (except for first word and proper nouns); tables are
+% numbered consecutively.
+
+% Note that publication-quality tables \emph{do not contain vertical rules.} We
+% strongly suggest the use of the \verb+booktabs+ package, which allows for
+% typesetting high-quality, professional tables:
+% \begin{center}
+%   \url{https://www.ctan.org/pkg/booktabs}
+% \end{center}
+% This package was used to typeset Table~\ref{sample-table}.
+
+% \begin{table}
+%   \caption{Sample table title}
+%   \label{sample-table}
+%   \centering
+%   \begin{tabular}{lll}
+%     \toprule
+%     \multicolumn{2}{c}{Part}                   \\
+%     \cmidrule(r){1-2}
+%     Name     & Description     & Size ($\mu$m) \\
+%     \midrule
+%     Dendrite & Input terminal  & $\sim$100     \\
+%     Axon     & Output terminal & $\sim$10      \\
+%     Soma     & Cell body       & up to $10^6$  \\
+%     \bottomrule
+%   \end{tabular}
+% \end{table}
+
+% \section{Final instructions}
+
+% Do not change any aspects of the formatting parameters in the style files.  In
+% particular, do not modify the width or length of the rectangle the text should
+% fit into, and do not change font sizes (except perhaps in the
+% \textbf{References} section; see below). Please note that pages should be
+% numbered.
+
+% \section{Preparing PDF files}
+
+% Please prepare submission files with paper size ``US Letter,'' and not, for
+% example, ``A4.''
+
+% Fonts were the main cause of problems in the past years. Your PDF file must only
+% contain Type 1 or Embedded TrueType fonts. Here are a few instructions to
+% achieve this.
+
+% \begin{itemize}
+
+% \item You should directly generate PDF files using \verb+pdflatex+.
+
+% \item You can check which fonts a PDF files uses.  In Acrobat Reader, select the
+%   menu Files$>$Document Properties$>$Fonts and select Show All Fonts. You can
+%   also use the program \verb+pdffonts+ which comes with \verb+xpdf+ and is
+%   available out-of-the-box on most Linux machines.
+
+% \item The IEEE has recommendations for generating PDF files whose fonts are also
+%   acceptable for NeurIPS. Please see
+%   \url{http://www.emfield.org/icuwb2010/downloads/IEEE-PDF-SpecV32.pdf}
+
+% \item \verb+xfig+ "patterned" shapes are implemented with bitmap fonts.  Use
+%   "solid" shapes instead.
+
+% \item The \verb+\bbold+ package almost always uses bitmap fonts.  You should use
+%   the equivalent AMS Fonts:
+% \begin{verbatim}
+%    \usepackage{amsfonts}
+% \end{verbatim}
+% followed by, e.g., \verb+\mathbb{R}+, \verb+\mathbb{N}+, or \verb+\mathbb{C}+
+% for $\mathbb{R}$, $\mathbb{N}$ or $\mathbb{C}$.  You can also use the following
+% workaround for reals, natural and complex:
+% \begin{verbatim}
+%    \newcommand{\RR}{I\!\!R} %real numbers
+%    \newcommand{\Nat}{I\!\!N} %natural numbers
+%    \newcommand{\CC}{I\!\!\!\!C} %complex numbers
+% \end{verbatim}
+% Note that \verb+amsfonts+ is automatically loaded by the \verb+amssymb+ package.
+
+% \end{itemize}
+
+% If your file contains type 3 fonts or non embedded TrueType fonts, we will ask
+% you to fix it.
+
+% \subsection{Margins in \LaTeX{}}
+
+% Most of the margin problems come from figures positioned by hand using
+% \verb+\special+ or other commands. We suggest using the command
+% \verb+\includegraphics+ from the \verb+graphicx+ package. Always specify the
+% figure width as a multiple of the line width as in the example below:
+% \begin{verbatim}
+%    \usepackage[pdftex]{graphicx} ...
+%    \includegraphics[width=0.8\linewidth]{myfile.pdf}
+% \end{verbatim}
+% See Section 4.4 in the graphics bundle documentation
+% (\url{http://mirrors.ctan.org/macros/latex/required/graphics/grfguide.pdf})
+
+% A number of width problems arise when \LaTeX{} cannot properly hyphenate a
+% line. Please give LaTeX hyphenation hints using the \verb+\-+ command when
+% necessary.
+
+
+% \section*{Broader Impact}
+
+% Authors are required to include a statement of the broader impact of their work, including its ethical aspects and future societal consequences.
+% Authors should discuss both positive and negative outcomes, if any. For instance, authors should discuss a)
+% who may benefit from this research, b) who may be put at disadvantage from this research, c) what are the consequences of failure of the system, and d) whether the task/method leverages
+% biases in the data. If authors believe this is not applicable to them, authors can simply state this.
+
+% Use unnumbered first level headings for this section, which should go at the end of the paper. {\bf Note that this section does not count towards the eight pages of content that are allowed.}
+
+% \begin{ack}
+% Use unnumbered first level headings for the acknowledgments. All acknowledgments
+% go at the end of the paper before the list of references. Moreover, you are required to declare
+% funding (financial activities supporting the submitted work) and competing interests (related financial activities outside the submitted work).
+% More information about this disclosure can be found at: \url{https://neurips.cc/Conferences/2020/PaperInformation/FundingDisclosure}.
+
+
+% Do {\bf not} include this section in the anonymized submission, only in the final paper. You can use the \texttt{ack} environment provided in the style file to autmoatically hide this section in the anonymized submission.
+% \end{ack}
+
+% \section*{References}
+
+% References follow the acknowledgments. Use unnumbered first-level heading for
+% the references. Any choice of citation style is acceptable as long as you are
+% consistent. It is permissible to reduce the font size to \verb+small+ (9 point)
+% when listing the references.
+% {\bf Note that the Reference section does not count towards the eight pages of content that are allowed.}
+% \medskip
+
+% \small
+
+% [1] Alexander, J.A.\ \& Mozer, M.C.\ (1995) Template-based algorithms for
+% connectionist rule extraction. In G.\ Tesauro, D.S.\ Touretzky and T.K.\ Leen
+% (eds.), {\it Advances in Neural Information Processing Systems 7},
+% pp.\ 609--616. Cambridge, MA: MIT Press.
+
+% [2] Bower, J.M.\ \& Beeman, D.\ (1995) {\it The Book of GENESIS: Exploring
+%   Realistic Neural Models with the GEneral NEural SImulation System.}  New York:
+% TELOS/Springer--Verlag.
+
+% [3] Hasselmo, M.E., Schnell, E.\ \& Barkai, E.\ (1995) Dynamics of learning and
+% recall at excitatory recurrent synapses and cholinergic modulation in rat
+% hippocampal region CA3. {\it Journal of Neuroscience} {\bf 15}(7):5249-5262.
+
+\end{document}

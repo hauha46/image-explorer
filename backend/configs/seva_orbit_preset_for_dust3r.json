@@ -1,0 +1,18 @@
+{
+  "description": "Hard-coded SEVA orbit camera preset that was previously baked into dust3r_reconstructor.py. This preset forces DUSt3R to use a perfect orbit trajectory instead of solving poses from image matches. It was tuned for SEVA-generated small-baseline orbit views (e.g. backend/duster_images).",
+  "note": "To re-apply, paste the 'code_block' into Dust3rReconstructor.reconstruct() right after global_aligner(...) is created and before compute_global_alignment().",
+  "code_block": "        if mode == GlobalAlignerMode.PointCloudOptimizer:\n            logger.info(\"Computing global alignment (Optimization steps)...\")\n            # Hand DUSt3R the SEVA orbit poses + intrinsics so it only refines points,\n            # not camera pose (otherwise small-baseline NVS frames are ill-conditioned).\n            from seva.geometry import get_preset_pose_fov, get_default_intrinsics\n            c2ws, fovs = get_preset_pose_fov(\n                option=\"orbit\", num_frames=len(imgs) + 1,\n                start_w2c=torch.eye(4), look_at=torch.Tensor([0, 0, 10]),\n            )\n            H, W = imgs[0]['img'].shape[-2], imgs[0]['img'].shape[-1]\n            Ks = get_default_intrinsics(fovs, aspect_ratio=W / H)\n            Ks[:, :2] *= torch.tensor([W, H]).reshape(1, -1, 1).repeat(Ks.shape[0], 1, 1)\n            scene.preset_pose(list(np.asarray(c2ws)[1:1 + len(imgs)]))\n            Ks_use = Ks[1:1 + len(imgs)]\n            scene.preset_focal([K.diagonal()[:2].mean().item() for K in Ks_use])\n            # NOTE: skipping preset_principal_point — DUSt3R's PointCloudOptimizer\n            # defaults optimize_pp=False, which already pins pp to (W/2, H/2),\n            # the exact value SEVA's get_default_intrinsics produces.\n            loss = scene.compute_global_alignment(init='known_poses', niter=300, schedule='linear', lr=0.01)\n",
+  "parameters": {
+    "preset": "orbit",
+    "num_frames": "len(imgs) + 1",
+    "start_w2c": "torch.eye(4)",
+    "look_at": [0, 0, 10],
+    "niter": 300,
+    "schedule": "linear",
+    "lr": 0.01,
+    "init": "known_poses"
+  },
+  "when_to_use": "When input images are SEVA-generated orbit views with small baselines where DUSt3R's own pose solver is ill-conditioned. Not recommended for general image sets with arbitrary camera motion.",
+  "file_origin": "backend/dust3r_reconstructor.py (removed on 2026-04-21)",
+  "saved_date": "2026-04-21"
+}

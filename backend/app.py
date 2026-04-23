@@ -19,10 +19,10 @@ import uuid
 import logging
 from pathlib import Path
 from scene_processor import SceneProcessor
-from dust3r_reconstructor import Dust3rReconstructor
+from reconstruction.dust3r_reconstructor import Dust3rReconstructor
 from contextlib import asynccontextmanager
 from depth_pro_estimator import DepthProEstimator
-from synthesizers import get_synthesizer, AVAILABLE_MODELS
+from novel_view_synthesis import get_synthesizer, AVAILABLE_MODELS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -703,10 +703,12 @@ async def run_scene_pipeline(session_id: str, session_dir: str, img_path: str,
             logger.warning("Stage 5: scene.glb missing, skipping mesh generation.")
         else:
             try:
-                from mesh_generator import point_cloud_to_mesh
+                from reconstruction.mesh_generator import point_cloud_to_mesh
                 point_cloud_to_mesh(
                     glb_path=str(scene_glb),
                     output_path=str(mesh_glb),
+                    algo="bpa",
+                    outlier_std=1.2,
                 )
                 mesh_status = "ok" if mesh_glb.exists() else "failed"
                 if mesh_status == "failed":

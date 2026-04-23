@@ -1,0 +1,29 @@
+# Preset for SEVA-generated indoor orbit views (e.g. backend/duster_images).
+# Tuned for living-room / bedroom scenes where DUSt3R's global alignment
+# shines and plane-based meshing extracts clean architectural geometry.
+
+images_dir: "backend/duster_images"
+output_dir: null
+
+reconstructor:
+  method: "dust3r"
+  device: null
+
+  dust3r:
+    as_pointcloud: true
+    flip_yz_for_gltf: true
+
+meshing:
+  enabled: true
+  algo: "planes"
+
+  outlier_nb: 30
+  outlier_std: 1.2
+  normal_knn: 30
+
+  planes:
+    distance_threshold: 0.02
+    ransac_n: 3
+    num_iterations: 1000
+    min_plane_ratio: 0.05
+    max_planes: 10

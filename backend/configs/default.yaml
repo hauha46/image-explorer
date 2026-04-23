@@ -1,0 +1,74 @@
+# Default reconstruction + meshing configuration.
+#
+# Usage:
+#   uv run python backend/run_reconstruction.py --config backend/configs/default.yaml
+#
+# Command-line flags override YAML values, e.g.:
+#   uv run python backend/run_reconstruction.py --config default.yaml --method dust3r
+
+images_dir: "backend/duster_images/veo_test_images"
+output_dir: null  # null = auto: backend/outputs/<point cloud model>/<meshing algorithm>/
+
+reconstructor:
+  method: "dust3r"   # vggt | vggt_depthpro | dust3r
+  device: null       # null = auto-detect (cuda / mps / cpu)
+
+  # ---- DUSt3R specific ----
+  dust3r:
+    as_pointcloud: true
+    flip_yz_for_gltf: true
+
+  # ---- VGGT specific ----
+  # NOTE: VGGT-1B needs ~14-16 GB VRAM for multi-frame inference.
+  # On 12 GB cards (e.g. RTX 4070 Ti) it will OOM at ANY resolution.
+  # Options: (1) force device: "cpu", (2) use DUSt3R instead.
+  vggt:
+    conf_threshold_pct: 50.0
+    target_size: 448
+    depth_chunk_size: 2
+    max_images: null
+
+  # ---- VGGT + DepthPro specific ----
+  # Same VRAM warning as VGGT above. This loads TWO large models.
+  vggt_depthpro:
+    conf_threshold_pct: 10.0
+    vggt_target_size: 448
+    depthpro_size: 1500
+    depth_chunk_size: 2
+    outlier_pct: 5.0
+    max_images: null
+
+meshing:
+  enabled: true
+  algo: "planes"       # poisson | bpa | alpha | planes
+
+  # shared preprocessing
+  outlier_nb: 30
+  outlier_std: 1.2
+  normal_knn: 30
+
+  # ---- Poisson specific ----
+  poisson:
+    depth: 10
+    scale: 1.0
+    linear_fit: true
+    point_weight: 15.0
+    density_quantile: 0.4
+    smooth_iters: 0
+
+  # ---- BPA specific ----
+  bpa:
+    radius_mult: 2.0
+    radii_levels: 3
+
+  # ---- Alpha specific ----
+  alpha:
+    mult: 2.0
+
+  # ---- Planes specific ----
+  planes:
+    distance_threshold: 0.02
+    ransac_n: 3
+    num_iterations: 1000
+    min_plane_ratio: 0.05
+    max_planes: 10

@@ -2,7 +2,7 @@
 # scripts/run_experiment.sh
 #
 # CLIP text re-conditioning experiment: 6 runs total.  All use
-# backend/images/standard_benchmark.jpg as input.  SEVA runs first so its
+# backend/images/benchmark_image_1.jpg as input.  SEVA runs first so its
 # ~90s cold load is amortized across the 3 SEVA cells, then ViewCrafter
 # runs its 3 cells.
 #

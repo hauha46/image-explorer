@@ -1,3 +1,22 @@
+# For Graders:
+
+
+First, run this command to install the necessary and relevant models to your system.
+This will download 9 models that were used in making our pipeline. During execution of 
+our pipeline, only 3 are used, however the other models were used in testing.
+
+<command
+
+Second, run uv sync in order to get up to date packages:
+
+< uv sync
+
+Third, run chmod on the run.sh in order to be able to access the frontend.
+
+
+
+
+
 # Image Explorer
 
 This project uses `uv` for dependency management and integrates the Dust3r model for 3D reconstruction from images.

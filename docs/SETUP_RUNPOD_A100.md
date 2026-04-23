@@ -50,7 +50,7 @@ Extract and verify:
 ```bash
 cd /workspace
 tar -xzf image-explorer.tar.gz
-ls image-explorer/backend/images/    # standard_benchmark.jpg, techbro_room.jpg
+ls image-explorer/backend/images/    # benchmark_image_1.jpg, techbro_room.jpg
 ls image-explorer/scripts/           # setup_runpod.sh, run_all.sh, etc.
 ls image-explorer/backend/vendor/    # dust3r, stable-virtual-camera, ViewCrafter, ...
 ```

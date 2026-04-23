@@ -152,8 +152,8 @@ def _load_synthesizer_and_dust3r(
     dtype: str = "fp32",
 ):
     """Lazy-import the heavy deps so this module can be inspected without them."""
-    from synthesizers.seva_synthesizer import SevaSynthesizer
-    from dust3r_reconstructor import Dust3rReconstructor
+    from novel_view_synthesis.seva_synthesizer import SevaSynthesizer
+    from reconstruction.dust3r_reconstructor import Dust3rReconstructor
 
     logger.info("Loading SEVA (num_steps=%d, dtype=%s) ...", num_steps, dtype)
     synth = SevaSynthesizer(

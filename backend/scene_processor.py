@@ -37,9 +37,9 @@ class SceneProcessor:
                                    neutral_prompt: str | None = None):
         """Step 2: Generate multi-view images using the configured NVS backend.
 
-        ``clip_lambda`` and ``neutral_prompt`` are forwarded to synthesizers
+        ``clip_lambda`` and ``neutral_prompt`` are forwarded to novel_view_synthesis
         that support CLIP text re-conditioning (currently only SEVA).  They are
-        silently ignored by synthesizers whose ``generate_views`` signature
+        silently ignored by novel_view_synthesis whose ``generate_views`` signature
         does not accept them.
         """
         views_dir = Path(output_dir) / "views"
